@@ -1,6 +1,20 @@
-click a day
-it shows the transit for yesterday
-the color tone base (overall gate/line) and what themes were on yesterday
-button that tallies - was this accurate, not accurate
-bias towards searching for confirmation
-database keep track
+last 3 days
+
+prediction
+gate line color tone (arrow) base
+other planets
+transit channels
+
+database 
+button that tallies - was this accurate, not accurate, input space
+
+
+
+Phase	Deliverable	Verification
+(now)	Reference tables + ephemeris + verify CLI + minimal page showing computed values	Math matches humdes.com /transits/ archive for 5+ dates
+Scraper modules for humdes/totalhd/human.design	Texts successfully merged, dedup works
+Composer (gate text + framework → interpretation)	Interpretation reads sensibly for sample gates
+Neon DB + Prisma schema + log persistence	Logs save/load correctlyFull UI: log form, history view, accuracy charts	End-to-end daily flow works
+
+
+
