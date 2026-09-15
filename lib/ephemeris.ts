@@ -205,9 +205,9 @@ export function deriveActivation(longitude: number): SixLayerActivation {
   const tone = clampSix(toneRaw);
   const toneResidual = toneRaw - Math.floor(toneRaw);
 
-  // Base: 1/6 of tone → 6 bases
-  const baseRaw = toneResidual * 6;    // [0, 6)
-  const base = clampSix(baseRaw);
+    // Base: 1/5 of tone → 5 bases (NOT 6 — Ra's Mandala has 5 Bases, not 6)
+    const baseRaw = toneResidual * 5; // [0, 5)
+    const base = clampFive(baseRaw);
 
   return { gate, line, color, tone, base };
 }
@@ -224,6 +224,14 @@ function clampSix(x: number): 1 | 2 | 3 | 4 | 5 | 6 {
   if (v > 6) return 6;
   return v as 1 | 2 | 3 | 4 | 5 | 6;
 }
+
+function clampFive(x: number): 1 | 2 | 3 | 4 | 5 {
+  const v = Math.floor(x) + 1;
+  if (v < 1) return 1;
+  if (v > 5) return 5;
+  return v as 1 | 2 | 3 | 4 | 5;
+}
+
 
 /**
  * Apply the counting rule to a base value, with cascade:
