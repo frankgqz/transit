@@ -74,7 +74,7 @@ export const GATES: readonly Gate[] = [
   { number: 25, name: 'The Spirit of Self',         ichingName: 'Innocence',       sign: 'Aries',     startDegree:  0.0000, endDegree:  5.6250, center: 'G',     keynote: 'Love of the body — pure spirit incarnating.' },
   { number: 17, name: 'Following',                 ichingName: 'Following',       sign: 'Aries',     startDegree:  5.6250, endDegree: 11.2500, center: 'Ajna',  keynote: 'Opinions and logical patterns; collective reasoning.' },
   { number: 21, name: 'The Toothbrush/Control',     ichingName: 'Biting Through',  sign: 'Aries',     startDegree: 11.2500, endDegree: 16.8750, center: 'Heart', keynote: 'The hunter; control and material resources.' },
-  { number: 51, name: 'The Gate of Shock',          ichingName: 'The Arousing',     sign: 'Aries',     startDegree: 16.8750, endDegree: 22.5000, center: 'Heart', keynote: 'Initiation; the ego's shock wave.' },
+  { number: 51, name: 'The Gate of Shock',          ichingName: 'The Arousing',     sign: 'Aries',     startDegree: 16.8750, endDegree: 22.5000, center: 'Heart', keynote: "Initiation; the ego's shock wave." },
   { number: 42, name: 'Increase',                   ichingName: 'Increase',        sign: 'Aries',     startDegree: 22.5000, endDegree: 28.1250, center: 'Sacral',keynote: 'Maturation; expansion of life force.' },
   { number:  3, name: 'Ordering',                   ichingName: 'Difficulty at the Beginning', sign: 'Aries', startDegree: 28.1250, endDegree: 30.0000, center: 'Sacral',keynote: 'Innovation through difficulty; chaos preceding order.' },
 
@@ -274,3 +274,7 @@ function signIndex(s: ZodiacSign): number {
   ];
   return order.indexOf(s);
 }
+
+// Build a fast lookup from number → Gate object (exported for consumers)
+export const GATE_BY_NUMBER: Record<number, typeof GATES[number]> = {};
+for (const g of GATES) GATE_BY_NUMBER[g.number] = g;

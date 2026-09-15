@@ -1,12 +1,16 @@
-last 3 days
-
-prediction
+# output
+last 3 days - prediction
 gate line color tone (arrow) base
 other planets
 transit channels
+descriptions
+
+
 
 database 
 button that tallies - was this accurate, not accurate, input space
+
+
 
 
 

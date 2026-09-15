@@ -291,10 +291,6 @@ export function bodyActivation(
   };
 }
 
-// Build a fast lookup from number → Gate object
-const GATE_BY_NUMBER_INTERNAL: Record<number, typeof GATES[number]> = {};
-for (const g of GATES) GATE_BY_NUMBER_INTERNAL[g.number] = g;
-const GATE_BY_NUMBER = GATE_BY_NUMBER_INTERNAL;
 
 // ─────────────────────────────────────────────────────────────────
 // FULL TRANSIT STATE
