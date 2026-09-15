@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { computeTransitState, formatLocalDate, formatTransitState, localDateStartUtc } from '@/lib/transitTimeline';
-import { activationsFor } from '@/lib/bodyActivation';
+import { activationsFor, type Activation } from '@/lib/bodyActivation';
 import {
   COLORS, TONES, BASES,
   getColor, getTone, getBase,
@@ -92,7 +92,7 @@ export default function TransitPage() {
   // Previous 3 days in same timezone.
   const previousDays = useMemo(() => {
     if (!date || !timezone) return [];
-    const out: { date: string; sun: BodyActivation }[] = [];
+    const out: { date: string; sun: Activation }[] = [];
     const [y, m, d] = date.split('-').map(Number);
     for (let i = 3; i >= 1; i--) {
       const dt = new Date(Date.UTC(y, m - 1, d - i));
@@ -101,7 +101,7 @@ export default function TransitPage() {
       });
       const localDate = localFmt.format(dt);
       const utcMs = localDateStartUtc(localDate, timezone) + 12 * 60 * 60 * 1000;
-      out.push({ date: localDate, sun: bodyActivation('Sun', utcMs) });
+      out.push({ date: localDate, sun: activationsFor(new Date(utcMs)).sun });
     }
     return out;
   }, [date, timezone]);
