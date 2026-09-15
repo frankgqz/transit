@@ -247,12 +247,14 @@ function liveDayReport(daysBack: number): string[] {
     const when = c.utc ?? c.date ?? c.time ?? crossing;
     const whenStr = when instanceof Date
       ? `${when.toISOString()} (${formatMelbourne(when)})`
-      : String(when);
+      : JSON.stringify(crossing);
     lines.push(`  ↳ Sun boundary crossing: ${whenStr} → gate ${c.gate}.${c.line}`);
   } else {
     lines.push(`  ↳ no Sun gate change on this day`);
   }
   return lines;
+}
+
 
 function formatMelbourne(utc: Date): string {
   return new Intl.DateTimeFormat('en-AU', {
