@@ -36,6 +36,7 @@
 //   Mercury/Mars: mean longitude only — can differ from true by several
 //     degrees (eccentric orbits). Outer planets: better, but still mean-only.
 // Cross-check against humdes.com via the verify CLI.
+
 import {
   GATES,
   GATE_BY_NUMBER,
@@ -75,6 +76,7 @@ const ZODIAC_SIGNS: readonly ZodiacSign[] = [
 //
 // All planet positions are computed RELATIVE to J2000.0
 // (2000-01-01 12:00 TT ≈ 11:58:55.816 UTC).
+
 const ANCHOR_UTC = Date.UTC(2000, 0, 1, 11, 58, 55); // J2000.0
 
 /**
@@ -124,7 +126,7 @@ function moonLongitudeCorrection(daysSinceAnchor: number): number {
   const M = (134.9634 + 13.064993 * daysSinceAnchor) * DEG2RAD;
   const D = (297.8502 + 12.190749 * daysSinceAnchor) * DEG2RAD;
   return (
-    6.2888 * Math.sin(M) +        // equation of center
+    6.2888 * Math.sin(M) +         // equation of center
     1.2740 * Math.sin(2 * D - M) + // evection
     0.6583 * Math.sin(2 * D) +     // variation
     0.2136 * Math.sin(2 * M)
@@ -147,9 +149,12 @@ export function longitudeAt(planet: PlanetId, utcMs: number): number {
   const speed = PLANET_SPEED_DEG_PER_DAY[planet]; // deg/day (negative = retrograde)
   const anchorLon = ANCHOR_LONGITUDE[planet];
   const daysSinceAnchor = (utcMs - ANCHOR_UTC) / MS_PER_DAY;
+
   let lon = anchorLon + speed * daysSinceAnchor;
+
   if (planet === 'Sun') lon += sunEquationOfCenter(daysSinceAnchor);
   if (planet === 'Moon') lon += moonLongitudeCorrection(daysSinceAnchor);
+
   return ((lon % 360) + 360) % 360; // wrap to [0, 360)
 }
 
