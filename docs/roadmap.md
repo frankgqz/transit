@@ -5,22 +5,33 @@ other planets
 transit channels
 descriptions
 
-
-
+# to do
+add time during day
 database 
 button that tallies - was this accurate, not accurate, input space
+all planets
 
-
-
-
-
-Phase	Deliverable	Verification
-(now)	Reference tables + ephemeris + verify CLI + minimal page showing computed values	Math matches humdes.com /transits/ archive for 5+ dates
-Scraper modules for humdes/totalhd/human.design	Texts successfully merged, dedup works
-Composer (gate text + framework → interpretation)	Interpretation reads sensibly for sample gates
-Neon DB + Prisma schema + log persistence	Logs save/load correctlyFull UI: log form, history view, accuracy charts	End-to-end daily flow works
+# scrape and compose
 
 https://www.humdes.com/en/transit/
 https://totalhumandesign.com/transit
 https://app.mybodygraph.com/charts/transit/just-now/
 https://human.design/daily-impact
+
+composer uses frameworks?
+
+# fixes
+earth - 180 degrees, output needs to check
+north node - true node vs mean node? or some bigger issue
+line color base
+
+# database
+
+Rating prediction
+Neon DB + Prisma schema + log persistence
+History view, accuracy chart?
+
+# immediate
+
+
+
