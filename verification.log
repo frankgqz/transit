@@ -1,94 +1,89 @@
 ═══════════════════════════════════════════════════════
   TRANSIT VERIFICATION REPORT (astronomy-engine)
-  Generated: 2026-09-15T14:05:41.919Z
+  Generated: 2026-09-15T14:52:55.408Z
   Anchors: Ra Uru Hu (Definitive Book, Rave I-Ching) +
            published eclipse longitudes
 ═══════════════════════════════════════════════════════
 
 ── Section 1: Anchor calibration ──
 
-[✗ FAIL] Spring Equinox 2022
+[✓ PASS] Spring Equinox 2022
   Expected: Gate 25 (Aries)
-  Actual:   Gate 25 (Pisces) @ 359.6872°
-  Sign:     ✗ Pisces
-  Source:   Ra — Definitive Book
-[✗ FAIL] Summer Solstice 2022
+  Actual:   Gate 25 (Aries) @ 0.0184°
+  Sign:     ✓ Aries
+  Source:   Ra — Definitive Book (wheel: gate 25 spans Pis 28°15′–Ari 3°52′)
+[✓ PASS] Summer Solstice 2022
   Expected: Gate 15 (Cancer)
-  Actual:   Gate 15 (Gemini) @ 89.9511°
-  Sign:     ✗ Gemini
-  Source:   Ra — Definitive Book
+  Actual:   Gate 15 (Cancer) @ 90.2692°
+  Sign:     ✓ Cancer
+  Source:   Ra — Definitive Book (wheel: gate 15 spans Gem 28°15′–Can 3°52′)
 [✗ FAIL] Autumn Equinox 2022
-  Expected: Gate 46 (Libra)
-  Actual:   Gate 18 (Virgo) @ 179.3041°
+  Expected: Gate 18 (Libra)
+  Actual:   Gate 18 (Virgo) @ 179.6302°
   Sign:     ✗ Virgo
-  Note:     Expected Gate 46, got Gate 18
-  Source:   Ra — Definitive Book
+  Source:   Wheel-derived — CONFLICTS with Definitive Book claim of gate 46; 0° Libra is inside gate 18
 [✗ FAIL] Winter Solstice 2022
-  Expected: Gate 10 (Capricorn)
-  Actual:   Gate 9 (Sagittarius) @ 269.3719°
+  Expected: Gate 9 (Capricorn)
+  Actual:   Gate 9 (Sagittarius) @ 269.7963°
   Sign:     ✗ Sagittarius
-  Note:     Expected Gate 10, got Gate 9
-  Source:   Ra — Definitive Book
-[✗ FAIL] April 2022 Solar Eclipse
+  Source:   Wheel-derived — CONFLICTS with Definitive Book claim of gate 10; 0° Capricorn is inside gate 9
+[✓ PASS] April 2022 Solar Eclipse
   Expected: Gate 24 (Taurus) @ 40.5833°
-  Actual:   Gate 24 (Taurus) @ 39.9684°
+  Actual:   Gate 24 (Taurus) @ 40.2923°
   Sign:     ✓ Taurus
-  Longitude drift: 0.6149° (±0.5°) ✗
+  Longitude drift: 0.2910° (±0.5°) ✓
   Source:   Published eclipse longitude
-[✗ FAIL] May 2022 Lunar Eclipse (Sun side)
-  Expected: Gate 14 (Taurus) @ 55.2833°
-  Actual:   Gate 8 (Taurus) @ 55.4511°
+[✓ PASS] May 2022 Lunar Eclipse (Sun side)
+  Expected: Gate 8 (Taurus) @ 55.2833°
+  Actual:   Gate 8 (Taurus) @ 55.7724°
   Sign:     ✓ Taurus
-  Longitude drift: 0.1678° (±0.5°) ✓
-  Note:     Expected Gate 14, got Gate 8
-  Source:   Published eclipse longitude
-[✗ FAIL] October 2022 Solar Eclipse (Sun side)
-  Expected: Gate 3 (Taurus) @ 32.1167°
-  Actual:   Gate 30 (Scorpio) @ 211.8847°
-  Sign:     ✗ Scorpio
-  Longitude drift: 179.7680° (±0.5°) ✗
-  Note:     Expected Gate 3, got Gate 30
-  Source:   Published eclipse longitude
-[✗ FAIL] November 2022 Lunar Eclipse (Sun side)
-  Expected: Gate 44 (Scorpio) @ 196.0000°
-  Actual:   Gate 63 (Scorpio) @ 225.8460°
+  Longitude drift: 0.4891° (±0.5°) ✓
+  Source:   Published eclipse longitude (gate corrected 14 → 8)
+[✓ PASS] October 2022 Solar Eclipse (Sun side)
+  Expected: Gate 55 (Scorpio) @ 212.1167°
+  Actual:   Gate 55 (Scorpio) @ 212.2170°
   Sign:     ✓ Scorpio
-  Longitude drift: 29.8460° (±0.5°) ✗
-  Note:     Expected Gate 44, got Gate 63
-  Source:   Published eclipse longitude
+  Longitude drift: 0.1003° (±0.5°) ✓
+  Source:   Published eclipse longitude (corrected from node-side 32.1167)
+[✓ PASS] November 2022 Lunar Eclipse (Sun side)
+  Expected: Gate 63 (Scorpio) @ 226.0000°
+  Actual:   Gate 63 (Scorpio) @ 226.2641°
+  Sign:     ✓ Scorpio
+  Longitude drift: 0.2641° (±0.5°) ✓
+  Source:   Published eclipse longitude (corrected from 196.0)
 
 ── Anchor summary ────────────
   Total:    8
-  Passed:   0 (0.0%)
-  Failed:   8
+  Passed:   6 (75.0%)
+  Failed:   2
 ──────────────────────────────
 
 ── Section 2: Live transits (Australia/Melbourne, last 4 days) ──
 
 ── 2026-09-14 (Melbourne local noon) ──
-  Sun:       47.6   @ 172.1044° (Virgo)
-  Earth:     10.6 @ 352.1044°
-  NorthNode: 41.5 @ 328.5645°
-  SouthNode: 29.5 @ 148.5645°
-  ↳ Sun boundary crossing: [object Object] → gate undefined.undefined
+  Sun:       47.5   @ 171.2926° (Virgo)
+  Earth:     10.5 @ 351.2926°
+  NorthNode: 41.5 @ 328.6086°
+  SouthNode: 29.5 @ 148.6086°
+  ↳ Sun line crossing: 2026-09-14T11:43:49.655Z (14/09/2026, 21:43:49) → 47.6.1.1.1 @ 171.6875°
 
 ── 2026-09-13 (Melbourne local noon) ──
-  Sun:       47.5   @ 171.1302° (Virgo)
-  Earth:     10.5 @ 351.1302°
-  NorthNode: 41.5 @ 328.6174°
-  SouthNode: 29.5 @ 148.6174°
-  ↳ Sun boundary crossing: [object Object] → gate undefined.undefined
+  Sun:       47.4   @ 170.3188° (Virgo)
+  Earth:     10.4 @ 350.3188°
+  NorthNode: 41.5 @ 328.6616°
+  SouthNode: 29.5 @ 148.6616°
+  ↳ Sun line crossing: 2026-09-13T12:37:47.133Z (13/09/2026, 22:37:47) → 47.5.1.1.1 @ 170.7500°
 
 ── 2026-09-12 (Melbourne local noon) ──
-  Sun:       47.4   @ 170.1565° (Virgo)
-  Earth:     10.4 @ 350.1565°
-  NorthNode: 41.5 @ 328.6704°
-  SouthNode: 29.5 @ 148.6704°
-  ↳ Sun boundary crossing: [object Object] → gate undefined.undefined
+  Sun:       47.3   @ 169.3455° (Virgo)
+  Earth:     10.3 @ 349.3455°
+  NorthNode: 41.5 @ 328.7145°
+  SouthNode: 29.5 @ 148.7145°
+  ↳ Sun line crossing: 2026-09-12T13:31:04.583Z (12/09/2026, 23:31:04) → 47.4.1.1.1 @ 169.8125°
 
 ── 2026-09-11 (Melbourne local noon) ──
-  Sun:       47.3   @ 169.1833° (Virgo)
-  Earth:     10.3 @ 349.1833°
-  NorthNode: 41.5 @ 328.7234°
-  SouthNode: 29.5 @ 148.7234°
-  ↳ Sun boundary crossing: [object Object] → gate undefined.undefined
+  Sun:       47.2   @ 168.3727° (Virgo)
+  Earth:     10.2 @ 348.3727°
+  NorthNode: 41.5 @ 328.7675°
+  SouthNode: 29.5 @ 148.7675°
+  ↳ Sun line crossing: 2026-09-11T14:23:41.418Z (12/09/2026, 00:23:41) → 47.3.1.1.1 @ 168.8750°

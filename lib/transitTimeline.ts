@@ -12,9 +12,9 @@
 // them, but they are NOT trustworthy until real anchor data lands.
 // The UI should label them as provisional.
 import {
-  bodyActivation,
-  longitudeAt,
-  deriveActivation,
+  activationsFor,
+  longitudeOf,
+  activate,
 } from './bodyActivation';
 import { computeTransitArrows } from './reference/arrows';
 import {
