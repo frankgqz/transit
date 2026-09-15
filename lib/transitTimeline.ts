@@ -17,7 +17,8 @@ import {
   type Activation,
 } from './bodyActivation';
 import { computeTransitArrows } from './reference/arrows';
-import { getGate } from './reference/gates';
+import { getGate, type GateNumber, type ZodiacSign } from './reference/gates';
+import type { ColorNumber, ToneNumber, BaseNumber } from './reference/frameworks';
 import type { PlanetId } from './reference/planets';
 import {
   type BodyActivation,
@@ -36,19 +37,36 @@ const BODY_TO_PLANET: Record<SupportedBody, PlanetId> = {
   southNode: 'SouthNode',
 };
 
+/** Zodiac sign from ecliptic longitude — Aries starts at 0°, 30° per sign. */
+const SIGNS: readonly ZodiacSign[] = [
+  'Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
+  'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces',
+];
+function signOfLongitude(longitude: number): ZodiacSign {
+  const norm = ((longitude % 360) + 360) % 360;
+  return SIGNS[Math.floor(norm / 30)];
+}
+
 /**
- * Adapter: lean Activation (gate/line/color/tone/base/key/longitude/sign)
- * → app-level BodyActivation, re-attaching `planet` and `gateMeta`.
- * getGate() (not GATE_BY_NUMBER) because gate numbers repeat across signs.
+ * Adapter: lean Activation → app-level BodyActivation.
+ * Builds fields explicitly (no spread): Activation types its layers as
+ * plain `number`, and BodyActivation demands the narrow unions. Also
+ * derives `sign`, which Activation doesn't carry.
  */
 export function toBodyActivation(
   a: Activation,
   planet: PlanetId
 ): BodyActivation {
   return {
-    ...a,
     planet,
-    gateMeta: getGate(a.gate),
+    gate: a.gate as GateNumber,
+    line: a.line as BodyActivation['line'],
+    color: a.color as ColorNumber,
+    tone: a.tone as ToneNumber,
+    base: a.base as BaseNumber,
+    longitude: a.longitude,
+    sign: signOfLongitude(a.longitude),
+    gateMeta: getGate(a.gate as GateNumber),
   };
 }
 
@@ -246,12 +264,18 @@ export function gateTransitionsForDay(
   const start = localDateStartUtc(dayStart, timezone);
   const end = localDateEndUtc(dayStart, timezone);
   let cursor = new Date(start);
-  // Hard cap: a fast body could cross many boundaries in a day; this
-  // only guards against a pathological infinite loop.
-  for (let i = 0; i < 100; i++) {
-    const bc = nextBoundaryChange(body, cursor, 'gate');
+  let currentGate = activationsFor(cursor)[body].gate;
+  // Depth has no "gate" member ("line" | "color" | "tone" | "base") —
+  // line is the coarsest boundary available. Walk line crossings and
+  // keep only the ones where the gate number changed. A line is
+  // 0.9375°; the Sun moves ~0.99°/day, so this is ~1 iteration/day.
+  for (let i = 0; i < 400; i++) {
+    const bc = nextBoundaryChange(body, cursor, 'line');
     if (bc.at.getTime() > end) break;
-    transitions.push(bc.at);
+    if (bc.activation.gate !== currentGate) {
+      transitions.push(bc.at);
+      currentGate = bc.activation.gate;
+    }
     cursor = bc.at;
   }
   return transitions;

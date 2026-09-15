@@ -1,24 +1,24 @@
 // app/page.tsx
 //
 // Minimal transit viewer for frankgqz/transit. Computes transit state
-// for a given (date, timezone) and displays the 13 body activations
-// plus the 2 transit arrows. No DB, no log UI, no interpretation
-// text yet — that's Phase 2/3.
+// for a given (date, timezone) and displays the 4 calibrated body
+// activations (Sun, Earth, N/S Node) plus the 2 transit arrows.
+// No DB, no log UI, no interpretation text yet — that's Phase 2/3.
 //
 // Usage: set the timezone + date at the top, click Compute. The
 // transit state updates in the page below.
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { computeTransitState, formatLocalDate, formatTransitState, localDateStartUtc } from '@/lib/transitTimeline';
-import { activationsFor, type Activation } from '@/lib/bodyActivation';
 import {
-  COLORS, TONES, BASES,
+  computeTransitState,
+  localDateStartUtc,
+  toBodyActivation,
+} from '@/lib/transitTimeline';
+import { activationsFor } from '@/lib/bodyActivation';
+import {
   getColor, getTone, getBase,
 } from '@/lib/reference/frameworks';
-import { GATES } from '@/lib/reference/gates';
-import { PLANETS } from '@/lib/reference/planets';
 import type { TransitState, BodyActivation } from '@/lib/types';
 
 // ─────────────────────────────────────────────────────────────────
@@ -45,17 +45,8 @@ function bodyLabel(planetId: string): string {
   const map: Record<string, string> = {
     Sun: 'Sun ☉',
     Earth: 'Earth ⊕',
-    Moon: 'Moon ☽',
     NorthNode: 'N.Node ☊',
     SouthNode: 'S.Node ☋',
-    Mercury: 'Mercury ☿',
-    Venus: 'Venus ♀',
-    Mars: 'Mars ♂',
-    Jupiter: 'Jupiter ♃',
-    Saturn: 'Saturn ♄',
-    Uranus: 'Uranus ♅',
-    Neptune: 'Neptune ♆',
-    Pluto: 'Pluto ♇',
   };
   return map[planetId] ?? planetId;
 }
@@ -92,7 +83,7 @@ export default function TransitPage() {
   // Previous 3 days in same timezone.
   const previousDays = useMemo(() => {
     if (!date || !timezone) return [];
-    const out: { date: string; sun: Activation }[] = [];
+    const out: { date: string; sun: BodyActivation }[] = [];
     const [y, m, d] = date.split('-').map(Number);
     for (let i = 3; i >= 1; i--) {
       const dt = new Date(Date.UTC(y, m - 1, d - i));
@@ -101,7 +92,10 @@ export default function TransitPage() {
       });
       const localDate = localFmt.format(dt);
       const utcMs = localDateStartUtc(localDate, timezone) + 12 * 60 * 60 * 1000;
-      out.push({ date: localDate, sun: toBodyActivation(activationsFor(new Date(utcMs)).sun, BODY_TO_PLANET.sun) });
+      out.push({
+        date: localDate,
+        sun: toBodyActivation(activationsFor(new Date(utcMs)).sun, 'Sun'),
+      });
     }
     return out;
   }, [date, timezone]);
@@ -174,40 +168,34 @@ export default function TransitPage() {
 
       {state && (
         <>
-          {/* ── Today's 13-body activations ── */}
+          {/* ── Today's calibrated activations (4 bodies) ── */}
           <section className="mb-10">
             <h2 className="text-lg font-sans font-semibold mb-3">
               Activations · {state.localDate} · {state.timezone}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
               {([
-                ['Sun',        state.sun,        'text-amber-300'],
-                ['Earth',      state.earth,      'text-amber-300'],
-                ['Moon',       state.moon,       'text-sky-300'],
-                ['NorthNode',  state.northNode,  'text-emerald-300'],
-                ['SouthNode',  state.southNode,  'text-emerald-300'],
-                ['Mercury',    state.mercury,    'text-neutral-300'],
-                ['Venus',      state.venus,      'text-neutral-300'],
-                ['Mars',       state.mars,       'text-neutral-300'],
-                ['Jupiter',    state.jupiter,    'text-neutral-300'],
-                ['Saturn',     state.saturn,     'text-neutral-300'],
-                ['Uranus',     state.uranus,     'text-neutral-300'],
-                ['Neptune',    state.neptune,    'text-neutral-300'],
-                ['Pluto',      state.pluto,      'text-neutral-300'],
+                ['Sun',       state.sun,       'text-amber-300'],
+                ['Earth',     state.earth,     'text-amber-300'],
+                ['NorthNode', state.northNode, 'text-emerald-300'],
+                ['SouthNode', state.southNode, 'text-emerald-300'],
               ] as const).map(([name, act, color]) => (
                 <div key={name} className="flex justify-between border-b border-neutral-800 py-1.5">
                   <span className={color + ' font-semibold'}>
                     {bodyLabel(name)}
                   </span>
                   <span className="text-neutral-300">
-                    {formatActivation(act as BodyActivation)}
+                    {formatActivation(act)}
                   </span>
                   <span className="text-neutral-500">
-                    {(act as BodyActivation).longitude.toFixed(2)}° {(act as BodyActivation).sign}
+                    {act.longitude.toFixed(2)}° {act.sign}
                   </span>
                 </div>
               ))}
             </div>
+            <p className="mt-2 text-xs text-neutral-500">
+              Moon + planets not yet computed — anchors still being calibrated.
+            </p>
           </section>
 
           {/* ── Sun's framework readout ── */}
@@ -286,7 +274,7 @@ export default function TransitPage() {
                 >
                   <span className="text-neutral-400 w-32">{d.date}</span>
                   <span className="text-amber-300 font-semibold">
-                    Gate {d.sun.gate} · {d.sun.name}
+                    Gate {d.sun.gate} · {d.sun.gateMeta.name}
                   </span>
                   <span className="text-neutral-300">
                     L{d.sun.line} · C{d.sun.color} · T{d.sun.tone} · B{d.sun.base}
@@ -299,7 +287,7 @@ export default function TransitPage() {
           {/* ── Footer note ── */}
           <footer className="text-xs text-neutral-500 mt-12 border-t border-neutral-800 pt-4">
             <p>
-              Phase 1 viewer. Computations self-derived from J2000.0 anchor +
+              Phase 1 viewer. Computations self-derived via astronomy-engine +
               Ra's Rave I'Ching gate boundaries. Verify against humdes.com
               /transits/ archive. Run <code className="bg-neutral-900 px-1">npm run verify</code>{' '}
               to see calibration report.
