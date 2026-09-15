@@ -1,333 +1,411 @@
-// lib/bodyActivation.ts
-//
-// Pure compute: given a UTC timestamp, derive a body's full activation
-// (gate, line, color, tone, base) plus its ecliptic longitude.
-//
-// No timezones, no date strings, no formatted output. That half lives in
-// lib/transitTimeline.ts, which imports from here — never the reverse.
-//
-// Counting rule (per Frank, matches HD canon):
-//   base  1..5 → 6 wraps to 1, tone  += 1
-//   tone  1..6 → 7 wraps to 1, color += 1
-//   color 1..6 → 7 wraps to 1, line  += 1
-//   line  1..6 → 7 wraps to 1, gate increments to the next on the wheel
-//
-// Wheel structure (verified against Ra's Definitive Book):
-//   64 gates × 5°37'30" (= 5.625°) = 360°
-//   Anchor: Gate 25 starts at 0° Aries     (spring equinox)
-//           Gate 15 starts at 0° Cancer    (summer solstice)
-//           Gate 46 starts at 0° Libra     (autumn equinox)
-//           Gate 10 starts at 0° Capricorn (winter solstice)
-//
-// Per-gate arcs (verified against Ra's Rave I'Ching):
-//   Line:  56'15"    = 0.9375°
-//   Color:  9'22.5"  = 0.15625°
-//   Tone:   1'33.75" = 0.02604°
-//   Base:     15.625" = 0.00434°   (5 bases, not 6)
-//
-// Ra's Mandala: 6 lines × 6 colors × 6 tones × 5 bases = 1080 points per gate.
-//
-// Ephemeris model: J2000.0 mean longitudes (JPL approximate elements) +
-// mean-motion rates, PLUS equation-of-center corrections for the Sun and
-// the principal lunar terms for the Moon. Accuracy:
-//   Sun:  ~±0.01°   (gate/line/color accurate)
-//   Moon: ~±0.3°    (gate accurate, line mostly accurate)
-//   Nodes: ~±0.1°   (mean node; gate accurate)
-//   Mercury/Mars: mean longitude only — can differ from true by several
-//     degrees (eccentric orbits). Outer planets: better, but still mean-only.
-// Cross-check against humdes.com via the verify CLI.
-
-import {
-  GATES,
-  GATE_BY_NUMBER,
-  gateAtLongitude,
-  positionWithinGate,
-  type GateNumber,
-  type ZodiacSign,
-} from './reference/gates';
-import {
-  type ColorNumber,
-  type ToneNumber,
-  type BaseNumber,
-} from './reference/frameworks';
-import {
-  PLANET_SPEED_DEG_PER_DAY,
-  type PlanetId,
-} from './reference/planets';
-import type { BodyActivation } from './types';
-
-// ─────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────
-
-const DEG2RAD = Math.PI / 180;
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
-
-/** The 12 zodiac signs in order, with their ecliptic longitude ranges. */
-const ZODIAC_SIGNS: readonly ZodiacSign[] = [
-  'Aries', 'Taurus', 'Gemini', 'Cancer',
-  'Leo', 'Virgo', 'Libra', 'Scorpio',
-  'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces',
-];
-
-// ─────────────────────────────────────────────────────────────────
-// ANCHOR REFERENCE MOMENT
-// ─────────────────────────────────────────────────────────────────
-//
-// All planet positions are computed RELATIVE to J2000.0
-// (2000-01-01 12:00 TT ≈ 11:58:55.816 UTC).
-
-const ANCHOR_UTC = Date.UTC(2000, 0, 1, 11, 58, 55); // J2000.0
-
 /**
- * Anchor ecliptic longitudes at J2000.0 (tropical, degrees [0, 360)).
- * Sun/Earth/Moon/Nodes are real J2000.0 values (JPL approximate mean
- * elements). Planets are mean longitudes at J2000.0 — good to the gate
- * level for slow bodies, approximate for Mercury/Mars (eccentric orbits).
+ * lib/bodyActivation.ts
+ *
+ * Rave Mandala decoder + high-precision ephemeris for Sun / Earth / Nodes.
+ *
+ * PRECISION NOTES
+ * ---------------
+ * Gate boundaries are NOT measurements -- they are exact arithmetic:
+ *
+ *   360 / 64        = 5.625      deg per gate
+ *   5.625 / 6       = 0.9375     deg per line
+ *   0.9375 / 6      = 0.15625    deg per color
+ *   0.15625 / 6     = 0.02604166 deg per tone
+ *   0.02604166 / 5  = 0.00520833 deg per base
+ *
+ *   => 6 * 6 * 6 * 5 = 1080 distinguishable points per gate.
+ *
+ * The only error in this module is ephemeris error. astronomy-engine
+ * (truncated VSOP87 + JPL DE405/406 fits) yields sub-arcsecond Sun
+ * longitudes across ~1700-2200. The Sun moves ~2.46"/min, so 1" of
+ * longitude error == ~24 s of clock error -- comfortably inside one base
+ * (0.0052 deg ~= 7.6 min). The previous J2000 + equation-of-center version
+ * was ~0.01 deg (~15 min), which could not resolve a base at all.
+ *
+ * SunPosition().elon is APPARENT geocentric longitude referred to the TRUE
+ * ecliptic of date, so aberration (~20.5") and nutation (~+/-17") are
+ * already folded in. Each of those is larger than a full color.
+ *
+ * REMAINING DEFINITIONAL RISK: mean node vs true node differ by up to ~1.7 deg
+ * (~30% of a gate). That now dominates any residual ephemeris error.
+ * Set NODE_MODE below once you confirm which one humdes.com publishes.
+ *
+ * Requires: astronomy-engine ^2.1.19
  */
-const ANCHOR_LONGITUDE: Record<PlanetId, number> = {
-  Sun: 280.4606,        // Sun's geocentric mean longitude at J2000.0
-  Earth: 100.4645,      // heliocentric Earth = Sun + 180°
-  Moon: 218.3162,       // Moon's mean longitude at J2000.0
-  NorthNode: 125.0446,  // mean ascending lunar node at J2000.0
-  SouthNode: 305.0446,  // opposite N.Node
-  Mercury: 252.2509,
-  Venus: 181.9798,
-  Mars: 355.4330,
-  Jupiter: 34.3964,
-  Saturn: 49.9542,
-  Uranus: 313.2381,
-  Neptune: 304.8631,
-  Pluto: 238.9567,
-  Chiron: 0.0,          // not used
+
+import * as Astronomy from "astronomy-engine";
+
+// ---------------------------------------------------------------------------
+// Rave Mandala constants
+// ---------------------------------------------------------------------------
+
+/** Gate 25, line 1, color 1, tone 1, base 1 begins here: 28d15' Pisces. */
+export const WHEEL_ORIGIN = 358.25;
+
+export const GATE_SPAN = 5.625; // 360 / 64
+export const LINE_SPAN = GATE_SPAN / 6; // 0.9375
+export const COLOR_SPAN = LINE_SPAN / 6; // 0.15625
+export const TONE_SPAN = COLOR_SPAN / 6; // 0.026041666...
+export const BASE_SPAN = TONE_SPAN / 5; // 0.005208333...
+
+export type Depth = "line" | "color" | "tone" | "base";
+
+const SPAN: Record<Depth, number> = {
+  line: LINE_SPAN,
+  color: COLOR_SPAN,
+  tone: TONE_SPAN,
+  base: BASE_SPAN,
 };
 
-// ─────────────────────────────────────────────────────────────────
-// PERTURBATION CORRECTIONS
-// ─────────────────────────────────────────────────────────────────
-
 /**
- * Sun's equation of center: difference between true and mean longitude.
- * Up to ±1.9° — larger than a third of a gate, so it must be applied.
- * Mean anomaly at J2000.0: 357.5291°, rate 0.98560028°/day.
- */
-function sunEquationOfCenter(daysSinceAnchor: number): number {
-  const M = (357.5291 + 0.98560028 * daysSinceAnchor) * DEG2RAD;
-  return 1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M);
-}
-
-/**
- * Principal lunar longitude terms (equation of center, evection,
- * variation). Reduces Moon error from ~±6° (mean only) to ~±0.3°.
- * Mean anomaly M': 134.9634° + 13.064993°/day
- * Mean elongation D: 297.8502° + 12.190749°/day
- */
-function moonLongitudeCorrection(daysSinceAnchor: number): number {
-  const M = (134.9634 + 13.064993 * daysSinceAnchor) * DEG2RAD;
-  const D = (297.8502 + 12.190749 * daysSinceAnchor) * DEG2RAD;
-  return (
-    6.2888 * Math.sin(M) +         // equation of center
-    1.2740 * Math.sin(2 * D - M) + // evection
-    0.6583 * Math.sin(2 * D) +     // variation
-    0.2136 * Math.sin(2 * M)
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// LONGITUDE COMPUTATION
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * Compute a body's tropical ecliptic longitude at a UTC timestamp,
- * relative to the J2000.0 anchor, with Sun/Moon corrections applied.
+ * Wheel order: 64 hexagrams counter-clockwise from WHEEL_ORIGIN.
  *
- * @param planet the celestial body
- * @param utcMs  milliseconds since 1970-01-01 00:00 UTC
- * @returns ecliptic longitude in degrees [0, 360)
+ * Validated against two published anchors:
+ *   Gate 47 = 17d00'00" .. 22d37'30" Virgo  -> 167.000 .. 172.625
+ *   Gate 6  = 22d37'30" .. 28d15'00" Virgo  -> 172.625 .. 178.250
+ * Both reproduce exactly. Gates 18..64 are NOT anchor-pinned -- call
+ * assertWheelAnchors() in your test suite and diff against the previous array.
  */
-export function longitudeAt(planet: PlanetId, utcMs: number): number {
-  const speed = PLANET_SPEED_DEG_PER_DAY[planet]; // deg/day (negative = retrograde)
-  const anchorLon = ANCHOR_LONGITUDE[planet];
-  const daysSinceAnchor = (utcMs - ANCHOR_UTC) / MS_PER_DAY;
+export const RAVE_WHEEL: readonly number[] = [
+  25, 17, 21, 51, 42, 3, 27, 24,
+  2, 23, 8, 20, 16, 35, 45, 12,
+  15, 52, 39, 53, 62, 56, 31, 33,
+  7, 4, 29, 59, 40, 64, 47, 6,
+  18, 46, 26, 22, 36, 30, 55, 37,
+  63, 60, 57, 44, 1, 43, 14, 34,
+  9, 5, 28, 38, 58, 48, 50, 32,
+  54, 61, 41, 19, 13, 49, 10, 11,
+];
 
-  let lon = anchorLon + speed * daysSinceAnchor;
+export type BodyName = "sun" | "earth" | "northNode" | "southNode";
 
-  if (planet === 'Sun') lon += sunEquationOfCenter(daysSinceAnchor);
-  if (planet === 'Moon') lon += moonLongitudeCorrection(daysSinceAnchor);
+/** Bodies that run prograde (eastward). Nodes run retrograde. */
+const PROGRADE: ReadonlySet<BodyName> = new Set<BodyName>(["sun", "earth"]);
 
-  return ((lon % 360) + 360) % 360; // wrap to [0, 360)
+// ---------------------------------------------------------------------------
+// Small math helpers
+// ---------------------------------------------------------------------------
+
+/** Wrap any angle into [0, 360). */
+export function norm360(deg: number): number {
+  return ((deg % 360) + 360) % 360;
+}
+
+/** Decimal degrees -> "Dd MM' SS.SS\"" */
+export function toDMS(deg: number): string {
+  const d = norm360(deg);
+  const dd = Math.floor(d);
+  const mRaw = (d - dd) * 60;
+  const mm = Math.floor(mRaw + 1e-9);
+  const ss = (mRaw - mm) * 60;
+  return `${dd}d ${String(mm).padStart(2, "0")}' ${ss.toFixed(2).padStart(5, "0")}"`;
+}
+
+// ---------------------------------------------------------------------------
+// Ephemeris
+// ---------------------------------------------------------------------------
+
+export const NODE_MODE: "mean" | "true" = "mean";
+
+/**
+ * Mean lunar node (ascending). Uses Terrestrial Time, so Delta-T is handled
+ * correctly (TT - UTC ~= 69.5 s and growing ~0.7 s/yr).
+ */
+function meanNodeLongitude(date: Date): number {
+  const T = Astronomy.MakeTime(date).tt / 36525;
+  const omega =
+    125.04452 -
+    1934.136261 * T +
+    0.0020708 * T * T +
+    (T * T * T) / 450000;
+  return norm360(omega);
+}
+
+/** Apparent geocentric Sun longitude, true ecliptic of date, degrees. */
+export function sunLongitude(date: Date): number {
+  return norm360(Astronomy.SunPosition(date).elon);
 }
 
 /**
- * Resolve an ecliptic longitude to a zodiac sign.
+ * HD "Earth" is the geocentric anti-Sun: Sun longitude + 180.
+ * (Identical to the heliocentric Earth longitude.)
  */
-export function signAt(longitude: number): ZodiacSign {
-  const idx = Math.floor((((longitude % 360) + 360) % 360) / 30);
-  return ZODIAC_SIGNS[idx];
+export function earthLongitude(date: Date): number {
+  return norm360(sunLongitude(date) + 180);
 }
 
-// ─────────────────────────────────────────────────────────────────
-// GATE / LINE / COLOR / TONE / BASE DERIVATION
-// ─────────────────────────────────────────────────────────────────
+export function nodeLongitude(date: Date, north = true): number {
+  if (NODE_MODE === "true") {
+    throw new Error(
+      "NODE_MODE='true' is not implemented. astronomy-engine exposes node " +
+        "crossing TIMES (SearchMoonNode), not instantaneous true-node " +
+        "longitude -- you need an osculating lunar orbit for that. Confirm " +
+        "which node humdes.com publishes before doing this work."
+    );
+  }
+  return norm360(meanNodeLongitude(date) + (north ? 0 : 180));
+}
 
-export interface SixLayerActivation {
-  gate: GateNumber;
-  line: 1 | 2 | 3 | 4 | 5 | 6;
-  color: ColorNumber;
-  tone: ToneNumber;
-  base: BaseNumber;
+export function longitudeOf(body: BodyName, date: Date): number {
+  switch (body) {
+    case "sun":
+      return sunLongitude(date);
+    case "earth":
+      return earthLongitude(date);
+    case "northNode":
+      return nodeLongitude(date, true);
+    case "southNode":
+      return nodeLongitude(date, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Decode: longitude -> gate / line / color / tone / base
+// ---------------------------------------------------------------------------
+
+export interface Activation {
+  body: BodyName;
+  longitude: number;
+  gate: number;
+  line: number;
+  color: number;
+  tone: number;
+  base: number;
+  /** Canonical HD key, e.g. "6.1.3.4.2" */
+  key: string;
+  /** Degrees since this gate began. */
+  intoGate: number;
+  /** Degrees since the current BASE began -- the finest grain. */
+  intoBase: number;
+  /** Absolute longitude of the current gate's start. */
+  gateStartLongitude: number;
+  /** Wheel index of the gate (0 = Gate 25). */
+  wheelIndex: number;
+}
+
+/** Absolute longitude at which `gate` begins. */
+export function gateStart(gate: number): number {
+  const i = RAVE_WHEEL.indexOf(gate);
+  if (i < 0) throw new Error(`Gate ${gate} is not present in RAVE_WHEEL`);
+  return norm360(WHEEL_ORIGIN + i * GATE_SPAN);
 }
 
 /**
- * Given an ecliptic longitude, derive the full activation
- * (gate, line, color, tone, base).
+ * Decode a raw ecliptic longitude into the full 5-layer HD key.
  *
- * Method:
- *   1. Find the gate the longitude falls in (gateAtLongitude)
- *   2. Compute position within that gate as [0, 1)
- *   3. Cascade the residual through each layer in arc order:
- *      line (1/6) → color (1/6) → tone (1/6) → base (1/5)
- *      Total = 6 × 6 × 6 × 5 = 1080 points per gate (Ra's Mandala).
+ * `wheelIndex` is computed with a 0.5-line epsilon rather than a bare floor.
+ * Floating-point multiples of 0.0052083... are not exact, so a position that
+ * is mathematically ON a boundary can land a few ULP either side and flip
+ * gate/line/color/tone/base wholesale. The epsilon makes on-boundary inputs
+ * resolve deterministically upward.
  */
-export function deriveActivation(longitude: number): SixLayerActivation {
-  // 1. Gate
-  const gateMeta = gateAtLongitude(longitude);
-  const gate = gateMeta.number;
+export function decodeLongitude(longitude: number): Activation {
+  const rel = norm360(longitude - WHEEL_ORIGIN);
+  const eps = 5e-7;
 
-  // 2. Position within gate [0, 1)
-  const pos = positionWithinGate(longitude);
+  let wheelIndex = Math.floor(rel / GATE_SPAN + eps);
+  if (wheelIndex > 63) wheelIndex = 0;
 
-  // Line: 1/6 of the gate
-  const lineRaw = pos * 6; // [0, 6)
-  const line = clampSix(lineRaw) as 1 | 2 | 3 | 4 | 5 | 6;
-  const lineResidual = lineRaw - Math.floor(lineRaw); // [0, 1)
+  let line = Math.floor((rel % GATE_SPAN) / LINE_SPAN + eps);
+  if (line > 5) line = 0;
 
-  // Color: 1/6 of the line
-  const colorRaw = lineResidual * 6; // [0, 6)
-  const color = clampSix(colorRaw);
-  const colorResidual = colorRaw - Math.floor(colorRaw);
+  let color = Math.floor((rel % LINE_SPAN) / COLOR_SPAN + eps);
+  if (color > 5) color = 0;
 
-  // Tone: 1/6 of the color
-  const toneRaw = colorResidual * 6; // [0, 6)
-  const tone = clampSix(toneRaw);
-  const toneResidual = toneRaw - Math.floor(toneRaw);
+  let tone = Math.floor((rel % COLOR_SPAN) / TONE_SPAN + eps);
+  if (tone > 5) tone = 0;
 
-  // Base: 1/5 of the tone — 5 bases, not 6 (Ra's Mandala = 1080/gate)
-  const baseRaw = toneResidual * 5; // [0, 5)
-  const base = clampFive(baseRaw);
+  let base = Math.floor((rel % TONE_SPAN) / BASE_SPAN + eps);
+  if (base > 4) base = 0;
 
-  return { gate, line, color, tone, base };
-}
-
-/**
- * Clamp a value in [0, 6) to the integer in [1, 6].
- * floor(x) + 1, so x = 0 → 1 and x = 5.999 → 6.
- */
-function clampSix(x: number): 1 | 2 | 3 | 4 | 5 | 6 {
-  const v = Math.floor(x) + 1;
-  if (v < 1) return 1;
-  if (v > 6) return 6;
-  return v as 1 | 2 | 3 | 4 | 5 | 6;
-}
-
-/**
- * Clamp a value in [0, 5) to the integer in [1, 5].
- * Same floor+1 convention as clampSix — bases run 1..5 per canon.
- */
-function clampFive(x: number): 1 | 2 | 3 | 4 | 5 {
-  const v = Math.floor(x) + 1;
-  if (v < 1) return 1;
-  if (v > 5) return 5;
-  return v as 1 | 2 | 3 | 4 | 5;
-}
-
-/**
- * Apply the counting rule with cascade:
- *   base 6 → base 1, tone +1; tone 7 → tone 1, color +1; etc.
- *
- * Takes and returns plain numbers so callers can hand it raw arithmetic
- * results; the returned `line` and `gate` are narrowed back to their
- * literal/union types at the boundary.
- */
-export function applyCountingRule(
-  base: number,
-  tone: number,
-  color: number,
-  line: number,
-  gate: number
-): { base: number; tone: number; color: number; line: number; gate: number } {
-  let b = base, t = tone, c = color, l = line, g = gate;
-
-  // Bases overflow at 5, every other layer at 6.
-  if (b > 5) {
-    b = 1;
-    t += 1;
-  }
-  if (t > 6) {
-    t = 1;
-    c += 1;
-  }
-  if (c > 6) {
-    c = 1;
-    l += 1;
-  }
-  if (l > 6) {
-    l = 1;
-    // `g` is a mutable counter that also receives plain numbers below
-    // (the 64 → 1 wrap), so TypeScript widens it to `number`. The value
-    // here is always a real gate, so assert it at the call site.
-    g = nextGate(g as GateNumber);
-  }
-  // Gate wraps 64 → 1
-  if (g > 64) g = 1;
+  const gate = RAVE_WHEEL[wheelIndex];
+  const intoBase = wheelIndex * GATE_SPAN + line * LINE_SPAN +
+    color * COLOR_SPAN + tone * TONE_SPAN + base * BASE_SPAN;
 
   return {
-    base: b,
-    tone: t,
-    color: c,
-    line: l as 1 | 2 | 3 | 4 | 5 | 6,
-    gate: g as GateNumber,
-  };
-}
-
-/**
- * Return the next gate on the wheel after the given one.
- * The wheel is the King Wen sequence (encoded in GATES array order).
- */
-export function nextGate(gate: GateNumber): GateNumber {
-  const idx = GATES.findIndex((g) => g.number === gate);
-  if (idx === -1) throw new Error(`Unknown gate: ${gate}`);
-  const next = GATES[(idx + 1) % GATES.length];
-  return next.number;
-}
-
-// ─────────────────────────────────────────────────────────────────
-// BODY ACTIVATION (top-level)
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * Compute the full activation of one celestial body at a UTC timestamp.
- * This is the function every consumer calls — once per body, 13 times
- * per timestamp.
- */
-export function bodyActivation(
-  planet: PlanetId,
-  utcMs: number
-): BodyActivation {
-  const longitude = longitudeAt(planet, utcMs);
-  const { gate, line, color, tone, base } = deriveActivation(longitude);
-  const gateMeta = GATE_BY_NUMBER[gate];
-  const sign = signAt(longitude);
-
-  return {
-    planet,
+    body: "sun", // caller overwrites
+    longitude: norm360(longitude),
     gate,
-    line,
-    color,
-    tone,
-    base,
-    longitude,
-    sign,
-    gateMeta,
+    line: line + 1,
+    color: color + 1,
+    tone: tone + 1,
+    base: base + 1,
+    key: `${gate}.${line + 1}.${color + 1}.${tone + 1}.${base + 1}`,
+    intoGate: rel - wheelIndex * GATE_SPAN,
+    intoBase: rel - intoBase,
+    gateStartLongitude: norm360(WHEEL_ORIGIN + wheelIndex * GATE_SPAN),
+    wheelIndex,
   };
+}
+
+export function activate(body: BodyName, date: Date): Activation {
+  return { ...decodeLongitude(longitudeOf(body, date)), body };
+}
+
+export interface ActivationSet {
+  at: Date;
+  sun: Activation;
+  earth: Activation;
+  northNode: Activation;
+  southNode: Activation;
+}
+
+export function activationsFor(date: Date): ActivationSet {
+  return {
+    at: date,
+    sun: activate("sun", date),
+    earth: activate("earth", date),
+    northNode: activate("northNode", date),
+    southNode: activate("southNode", date),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Exact boundary crossings
+//
+// Use these in verify/cli.ts instead of spot-checking timestamps. Asserting
+// "the Sun crosses into 6.2 at exactly 2026-09-15T04:11:38Z" is a far sharper
+// test than "at 12:00 the Sun was in 6.1".
+// ---------------------------------------------------------------------------
+
+export interface BoundaryChange {
+  at: Date;
+  longitude: number;
+  activation: Activation;
+}
+
+/** Absolute longitude of the next `depth` boundary at or below `rel`. */
+function previousBoundaryRel(rel: number, depth: Depth): number {
+  const span = SPAN[depth];
+  const k = Math.floor(rel / span + 1e-12);
+  return k * span;
+}
+
+function nextBoundaryRel(rel: number, depth: Depth): number {
+  const span = SPAN[depth];
+  const k = Math.floor(rel / span + 1e-12);
+  return (k + 1) * span;
+}
+
+/**
+ * Next instant at which `body` crosses a `depth` boundary.
+ *
+ * Sun/Earth go through astronomy-engine's root finder (Newton/bisection hybrid,
+ * ~1e-12 deg). Nodes use a plain bisection on the analytic mean-node series.
+ */
+export function nextBoundaryChange(
+  body: BodyName,
+  from: Date,
+  depth: Depth = "line"
+): BoundaryChange {
+  const startRel = norm360(longitudeOf(body, from) - WHEEL_ORIGIN);
+  const prograde = PROGRADE.has(body);
+  const targetRel = prograde
+    ? nextBoundaryRel(startRel, depth)
+    : previousBoundaryRel(startRel, depth);
+
+  const at = prograde
+    ? searchPrograde(body, targetRel, from)
+    : searchNode(body, targetRel, from);
+
+  return {
+    at,
+    longitude: norm360(WHEEL_ORIGIN + targetRel),
+    activation: { ...decodeLongitude(norm360(WHEEL_ORIGIN + targetRel)), body },
+  };
+}
+
+/** Sun and Earth share a root finder: Earth lon == Sun lon + 180. */
+function searchPrograde(body: BodyName, targetRel: number, from: Date): Date {
+  const targetLon = norm360(WHEEL_ORIGIN + targetRel);
+  const sunTarget = body === "sun" ? targetLon : norm360(targetLon - 180);
+
+  // One line takes the Sun ~0.95 d; one base takes ~7.6 min. 2 days covers
+  // every depth with margin.
+  const hit = Astronomy.SearchSunLongitude(sunTarget, from, 2);
+  if (!hit) {
+    throw new Error(
+      `SearchSunLongitude found no crossing of ${sunTarget} within 2 days`
+    );
+  }
+  return hit.date;
+}
+
+/**
+ * Mean node runs retrograde at ~0.05295 deg/day, so a full line takes ~17.7 d
+ * and a base ~2.4 h. Bisect on the analytic series; the function is strictly
+ * monotonic over these windows so bisection is exact to the tolerance.
+ */
+function searchNode(body: BodyName, targetRel: number, from: Date): Date {
+  const windowMs = 25 * 24 * 3600 * 1000;
+  let lo = from.getTime();
+  let hi = lo + windowMs;
+
+  const signed = (t: number): number => {
+    const rel = norm360(longitudeOf(body, new Date(t)) - WHEEL_ORIGIN);
+    // Unwrap so the residual is continuous and monotonically DECREASING.
+    let d = rel - targetRel;
+    if (d < -180) d += 360;
+    if (d > 180) d -= 360;
+    return d;
+  };
+
+  let dLo = signed(lo);
+  if (dLo <= 0) {
+    // Already at/past the boundary (within epsilon): report `from` itself.
+    return new Date(lo);
+  }
+  if (signed(hi) > 0) {
+    throw new Error(
+      `Mean node did not reach rel ${targetRel} within 25 days -- window too small`
+    );
+  }
+
+  for (let i = 0; i < 64; i++) {
+    const mid = (lo + hi) / 2;
+    const dMid = signed(mid);
+    if (dMid > 0) {
+      lo = mid;
+      dLo = dMid;
+    } else {
+      hi = mid;
+    }
+    if (hi - lo < 1) break; // sub-millisecond
+  }
+
+  void dLo;
+  return new Date((lo + hi) / 2);
+}
+
+// ---------------------------------------------------------------------------
+// Self-check
+// ---------------------------------------------------------------------------
+
+/**
+ * Throws unless the wheel reproduces the two published Virgo anchors.
+ * Call this from verify/cli.ts (or a unit test) on every run.
+ */
+export function assertWheelAnchors(): void {
+  const tol = 1e-9;
+
+  const g6 = gateStart(6);
+  if (Math.abs(g6 - 172.625) > tol) {
+    throw new Error(
+      `RAVE_WHEEL failed: Gate 6 starts at ${g6}, expected 172.625 ` +
+        `(22d37'30" Virgo). The wheel array has drifted.`
+    );
+  }
+
+  const g47 = gateStart(47);
+  if (Math.abs(g47 - 167) > tol) {
+    throw new Error(
+      `RAVE_WHEEL failed: Gate 47 starts at ${g47}, expected 167.000 ` +
+        `(17d00'00" Virgo).`
+    );
+  }
+
+  const seen = new Set<number>(RAVE_WHEEL);
+  if (seen.size !== 64) {
+    throw new Error(`RAVE_WHEEL has ${seen.size} unique gates, expected 64`);
+  }
 }

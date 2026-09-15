@@ -20,5 +20,7 @@ Scraper modules for humdes/totalhd/human.design	Texts successfully merged, dedup
 Composer (gate text + framework → interpretation)	Interpretation reads sensibly for sample gates
 Neon DB + Prisma schema + log persistence	Logs save/load correctlyFull UI: log form, history view, accuracy charts	End-to-end daily flow works
 
-
-
+https://www.humdes.com/en/transit/
+https://totalhumandesign.com/transit
+https://app.mybodygraph.com/charts/transit/just-now/
+https://human.design/daily-impact

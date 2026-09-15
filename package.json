@@ -9,6 +9,7 @@
     "verify": "tsx verify/cli.ts"
   },
   "dependencies": {
+    "astronomy-engine": "^2.1.19",
     "next": "16.0.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
