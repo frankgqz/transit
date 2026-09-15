@@ -18,7 +18,7 @@ import {
  * This version resolves the offset AT the candidate instant and
  * corrects once, which handles the normal DST case.
  */
-export function localDateStartUtc(date: Date, timeZone: string): Date {
+export function localDateStartUtc(date: Date, timeZone: string): number {
   // First guess: treat the local Y/M/D as if it were UTC
   const y = date.getFullYear();
   const m = date.getMonth();
@@ -33,15 +33,15 @@ export function localDateStartUtc(date: Date, timeZone: string): Date {
   // One refinement pass: the offset may differ if the correction
   // crossed a DST boundary.
   const offsetAtCorrected = getTimeZoneOffsetMs(new Date(corrected), timeZone);
-  return new Date(guess - offsetAtCorrected);
+  return guess - offsetAtCorrected;
 }
 
 /** UTC instant just before local midnight of the FOLLOWING local day. */
-export function localDateEndUtc(date: Date, timeZone: string): Date {
+export function localDateEndUtc(date: Date, timeZone: string): number {
   const nextDay = new Date(date);
   nextDay.setDate(nextDay.getDate() + 1);
-  // End is exclusive-ish: one millisecond before next local midnight
-  return new Date(localDateStartUtc(nextDay, timeZone).getTime() - 1);
+  // one millisecond before next local midnight
+  return localDateStartUtc(nextDay, timeZone) - 1;
 }
 
 /** Offset (ms) of timeZone from UTC at a given instant. */
@@ -94,8 +94,12 @@ export function formatLocalDate(date: Date, timeZone: string): string {
  * Full transit picture for one instant: Sun + Earth activations
  * with gate/line/color/tone/base and the counting-rule arrows.
  */
-export function computeTransitState(instant: Date): TransitState {
-  return bodyActivation(instant);
+export function computeTransitState(
+  utcMs: number,
+  _timeZone: string,
+  _date: Date
+): TransitState {
+  return bodyActivation(new Date(utcMs));
 }
 
 /**
@@ -109,8 +113,8 @@ export function sunTransitionsForDay(
   endAnchor: Date
 ): Date[] {
   const transitions: Date[] = [];
-  const start = localDateStartUtc(dayStart, timeZone);
-  const end = localDateEndUtc(dayStart, timeZone);
+  const start = new Date(localDateStartUtc(dayStart, timeZone));
+  const end = new Date(localDateEndUtc(dayStart, timeZone));
 
   // The Sun moves ~0.9856°/day; a gate (0.9375°) lasts ~22.8 h,
   // so at most one or two transitions per day. Binary-search each

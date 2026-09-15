@@ -11,7 +11,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { computeTransitState, formatLocalDate, formatTransitState, sunTransitionsForDay } from '@/lib/transitTimeline';
+import { computeTransitState, formatLocalDate, formatTransitState, localDateStartUtc } from '@/lib/transitTimeline';
 import { bodyActivation } from '@/lib/bodyActivation';
 import {
   COLORS, TONES, BASES,
