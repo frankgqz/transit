@@ -1,43 +1,47 @@
 // lib/transitTimeline.ts
 //
-// Timezone-aware day handling + the shape of a transit snapshot.
+// Timezone-aware day handling + assembling a TransitState snapshot.
 //
-// Imports pure math from ./bodyActivation and never the reverse.
-// `TransitState` is DEFINED HERE, not in bodyActivation.ts: a "day"
-// and a viewer timezone are presentation concerns, and bodyActivation
-// stays free of both.
+// Imports pure math from ./bodyActivation and the shared contract from
+// ./types. Never the reverse: bodyActivation.ts knows nothing about
+// days, timezones, or the 13-body shape.
+//
+// Scope (v0.2): Sun + Earth anchors are calibrated; Moon, Nodes and the
+// planets still carry PLACEHOLDER anchors in bodyActivation.ts. Their
+// activations are computed and returned because TransitState requires
+// them, but they are NOT trustworthy until real anchor data lands.
+// The UI should label them as provisional.
 import {
   bodyActivation,
   longitudeAt,
-  signAt,
   deriveActivation,
-  applyCountingRule,
-  type SixLayerActivation,
 } from './bodyActivation';
-import type { BodyActivation } from './types';
+import { deriveTransitArrows } from './reference/arrows';
+import {
+  ALL_BODY_NAMES,
+  type BodyActivation,
+  type BodyActivationMap,
+  type BodyName,
+  type TransitState,
+} from './types';
 import type { PlanetId } from './reference/planets';
 
-/* ============================================================
-   TRANSIT STATE SHAPE
-   ============================================================ */
-
-/** One body's activation as surfaced to the UI. */
-export type Activation = BodyActivation;
-
-export interface TransitState {
-  /** The UTC instant this snapshot was computed at. */
-  instant: Date;
-  /** Viewer timezone the day was resolved in. */
-  timeZone: string;
-  /** Local calendar day, 'YYYY-MM-DD'. */
-  localDate: string;
-  /** Human label, e.g. 'Monday, September 14, 2026'. */
-  localLabel: string;
-  sun: BodyActivation;
-  earth: BodyActivation;
-  /** Counting-rule carries for the Sun activation (see sunArrows). */
-  arrows: string[];
-}
+/** BodyName → the PlanetId key used by bodyActivation(). */
+const BODY_TO_PLANET: Record<BodyName, PlanetId> = {
+  sun: 'Sun',
+  earth: 'Earth',
+  moon: 'Moon',
+  northNode: 'NorthNode',
+  southNode: 'SouthNode',
+  mercury: 'Mercury',
+  venus: 'Venus',
+  mars: 'Mars',
+  jupiter: 'Jupiter',
+  saturn: 'Saturn',
+  uranus: 'Uranus',
+  neptune: 'Neptune',
+  pluto: 'Pluto',
+};
 
 /* ============================================================
    TIMEZONE-AWARE DAY HANDLING
@@ -52,23 +56,29 @@ export interface TransitState {
  */
 export function localDateStartUtc(
   date: string | Date,
-  timeZone: string
+  timezone: string
 ): number {
-  const { y, m, d } = localDateParts(date, timeZone);
+  const { y, m, d } = localDateParts(date, timezone);
   const guess = Date.UTC(y, m, d, 0, 0, 0, 0);
 
-  const offsetAtGuess = getTimeZoneOffsetMs(new Date(guess), timeZone);
+  const offsetAtGuess = getTimeZoneOffsetMs(new Date(guess), timezone);
   const corrected = guess - offsetAtGuess;
 
   // Refinement pass: the offset may differ if that crossed a DST boundary.
-  const offsetAtCorrected = getTimeZoneOffsetMs(new Date(corrected), timeZone);
+  const offsetAtCorrected = getTimeZoneOffsetMs(
+    new Date(corrected),
+    timezone
+  );
   return guess - offsetAtCorrected;
 }
 
 /** UTC ms one millisecond before local midnight of the following day. */
-export function localDateEndUtc(date: string | Date, timeZone: string): number {
-  const { y, m, d } = localDateParts(date, timeZone);
-  return localDateStartUtc(new Date(Date.UTC(y, m, d + 1)), timeZone) - 1;
+export function localDateEndUtc(
+  date: string | Date,
+  timezone: string
+): number {
+  const { y, m, d } = localDateParts(date, timezone);
+  return localDateStartUtc(new Date(Date.UTC(y, m, d + 1)), timezone) - 1;
 }
 
 /**
@@ -80,7 +90,7 @@ export function localDateEndUtc(date: string | Date, timeZone: string): number {
  */
 function localDateParts(
   date: string | Date,
-  timeZone: string
+  timezone: string
 ): { y: number; m: number; d: number } {
   if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
     const [y, m, d] = date.split('-').map(Number);
@@ -88,19 +98,20 @@ function localDateParts(
   }
   const instant = typeof date === 'string' ? new Date(date) : date;
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
+    timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(instant);
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  const get = (t: string) =>
+    Number(parts.find((p) => p.type === t)?.value ?? 0);
   return { y: get('year'), m: get('month') - 1, d: get('day') };
 }
 
-/** Offset of timeZone from UTC, in ms, at a given instant. */
-function getTimeZoneOffsetMs(instant: Date, timeZone: string): number {
+/** Offset of `timezone` from UTC, in ms, at a given instant. */
+function getTimeZoneOffsetMs(instant: Date, timezone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
+    timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -109,7 +120,8 @@ function getTimeZoneOffsetMs(instant: Date, timeZone: string): number {
     second: '2-digit',
     hour12: false,
   }).formatToParts(instant);
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  const get = (t: string) =>
+    Number(parts.find((p) => p.type === t)?.value ?? 0);
   const asUtc = Date.UTC(
     get('year'),
     get('month') - 1,
@@ -125,11 +137,14 @@ function getTimeZoneOffsetMs(instant: Date, timeZone: string): number {
    DATE FORMATTING
    ============================================================ */
 
-export function formatLocalDate(date: string | Date, timeZone: string): string {
-  const { y, m, d } = localDateParts(date, timeZone);
+export function formatLocalDate(
+  date: string | Date,
+  timezone: string
+): string {
+  const { y, m, d } = localDateParts(date, timezone);
   // Formatted at noon UTC so no zone can roll it to an adjacent day.
   return new Intl.DateTimeFormat('en-US', {
-    timeZone,
+    timeZone: timezone,
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -137,29 +152,20 @@ export function formatLocalDate(date: string | Date, timeZone: string): string {
   }).format(new Date(Date.UTC(y, m, d, 12)));
 }
 
-function toIsoDay(date: string | Date, timeZone: string): string {
-  const { y, m, d } = localDateParts(date, timeZone);
+/** Local calendar day as 'YYYY-MM-DD'. */
+export function toIsoDay(date: string | Date, timezone: string): string {
+  const { y, m, d } = localDateParts(date, timezone);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${y}-${p(m + 1)}-${p(d)}`;
 }
 
-/* ============================================================
-   COUNTING-RULE ARROWS
-   ============================================================ */
-
 /**
- * Which layers carry when the Sun's activation steps one base forward.
- * Reports only the layers that actually rolled over — a base increment
- * that doesn't overflow 5 produces no arrow.
+ * UTC ms for the representative instant of a local day: noon local.
+ * Noon is the convention in types.ts (TransitDayRow) and it keeps the
+ * snapshot inside the same local day for every timezone on Earth.
  */
-function sunArrows(a: SixLayerActivation): string[] {
-  const next = applyCountingRule(a.base, a.tone, a.color, a.line, a.gate);
-  const arrows: string[] = [];
-  if (next.tone !== a.tone) arrows.push(`tone ${a.tone}→${next.tone}`);
-  if (next.color !== a.color) arrows.push(`color ${a.color}→${next.color}`);
-  if (next.line !== a.line) arrows.push(`line ${a.line}→${next.line}`);
-  if (next.gate !== a.gate) arrows.push(`gate ${a.gate}→${next.gate}`);
-  return arrows;
+export function localNoonUtc(date: string | Date, timezone: string): number {
+  return localDateStartUtc(date, timezone) + 12 * 60 * 60 * 1000;
 }
 
 /* ============================================================
@@ -167,60 +173,90 @@ function sunArrows(a: SixLayerActivation): string[] {
    ============================================================ */
 
 /**
- * Full snapshot for one instant. utcMs is the instant to compute at
- * (callers pass local noon); timeZone and date label the local day.
+ * Full snapshot for one instant: all 13 bodies plus the two
+ * transit-active arrows.
  *
- * Sun and Earth only — Moon/Nodes/planets are still placeholder anchors
- * in bodyActivation.ts and would render as invented data.
+ * @param utcMs    instant to compute at (use localNoonUtc for a day)
+ * @param timezone viewer's IANA zone
+ * @param date     the local day being labelled
  */
 export function computeTransitState(
   utcMs: number,
-  timeZone: string,
+  timezone: string,
   date: string | Date
 ): TransitState {
-  const instant = new Date(utcMs);
-  const sun = bodyActivation('Sun', utcMs);
-  const earth = bodyActivation('Earth', utcMs);
+  const activations = {} as BodyActivationMap;
+  for (const name of ALL_BODY_NAMES) {
+    activations[name] = bodyActivation(BODY_TO_PLANET[name], utcMs);
+  }
+
   return {
-    instant,
-    timeZone,
-    localDate: toIsoDay(date, timeZone),
-    localLabel: formatLocalDate(date, timeZone),
-    sun,
-    earth,
-    arrows: sunArrows(sun),
+    utcTimestamp: new Date(utcMs).toISOString(),
+    timezone,
+    localDate: toIsoDay(date, timezone),
+    // The 13 bodies, spread in ALL_BODY_NAMES order so the object
+    // literal stays in sync if the list ever changes.
+    sun: activations.sun,
+    earth: activations.earth,
+    moon: activations.moon,
+    northNode: activations.northNode,
+    southNode: activations.southNode,
+    mercury: activations.mercury,
+    venus: activations.venus,
+    mars: activations.mars,
+    jupiter: activations.jupiter,
+    saturn: activations.saturn,
+    uranus: activations.uranus,
+    neptune: activations.neptune,
+    pluto: activations.pluto,
+    // fast arrow ← Sun + Earth tones; slow ← North + South Node tones.
+    transitArrows: deriveTransitArrows(
+      activations.sun,
+      activations.earth,
+      activations.northNode,
+      activations.southNode
+    ),
   };
 }
 
+/** Convenience: snapshot for a whole local day (computed at noon). */
+export function transitStateForDay(
+  date: string | Date,
+  timezone: string
+): TransitState {
+  return computeTransitState(localNoonUtc(date, timezone), timezone, date);
+}
+
 /**
- * UTC instants within a local day where the Sun's gate changes, so the
- * UI can show "Gate 47 until 14:32, then Gate 64".
+ * UTC instants within a local day where a body's gate changes.
+ * A gate spans 5.625° and the Sun moves ~0.9856°/day, so one gate
+ * lasts ~5.7 days — normally ZERO transitions per day for the Sun.
+ * The Moon crosses several. Kept generic so the timeline view can
+ * reuse it for any body.
  */
-export function sunTransitionsForDay(
+export function gateTransitionsForDay(
+  planet: PlanetId,
   dayStart: string | Date,
-  timeZone: string
+  timezone: string
 ): Date[] {
   const transitions: Date[] = [];
-  const start = localDateStartUtc(dayStart, timeZone);
-  const end = localDateEndUtc(dayStart, timeZone);
+  const start = localDateStartUtc(dayStart, timezone);
+  const end = localDateEndUtc(dayStart, timezone);
 
-  // The Sun moves ~0.9856°/day and a gate spans 5.625°, so a gate lasts
-  // ~5.7 days — normally ZERO transitions per day. The scan is kept
-  // because it also catches the rare day a crossing lands inside it.
   const STEP = 30 * 60 * 1000;
   let cursor = start;
-  let currentGate = deriveActivation(longitudeAt('Sun', cursor)).gate;
+  let currentGate = deriveActivation(longitudeAt(planet, cursor)).gate;
 
   while (cursor + STEP < end) {
     const next = cursor + STEP;
-    const g = deriveActivation(longitudeAt('Sun', next)).gate;
+    const g = deriveActivation(longitudeAt(planet, next)).gate;
     if (g !== currentGate) {
       // Narrow the crossing to ~5 s.
       let lo = cursor;
       let hi = next;
       while (hi - lo > 5000) {
         const mid = Math.floor((lo + hi) / 2);
-        if (deriveActivation(longitudeAt('Sun', mid)).gate === currentGate) {
+        if (deriveActivation(longitudeAt(planet, mid)).gate === currentGate) {
           lo = mid;
         } else {
           hi = mid;
@@ -237,11 +273,22 @@ export function sunTransitionsForDay(
   return transitions;
 }
 
+/** Sun-only wrapper (what the day view asks for most). */
+export function sunTransitionsForDay(
+  dayStart: string | Date,
+  timezone: string
+): Date[] {
+  return gateTransitionsForDay('Sun', dayStart, timezone);
+}
+
 /* ============================================================
    DISPLAY FORMATTING
    ============================================================ */
 
-function formatActivation(label: string, a: BodyActivation): string {
+export function formatActivation(
+  label: string,
+  a: BodyActivation
+): string {
   return [
     `${label}: Gate ${a.gate}.${a.line} — ${a.sign}`,
     `Color ${a.color} · Tone ${a.tone} · Base ${a.base}`,
@@ -249,15 +296,17 @@ function formatActivation(label: string, a: BodyActivation): string {
   ].join(' — ');
 }
 
-/** Human-readable multi-line summary of a TransitState. */
+/** Human-readable summary: the two calibrated bodies in full, the rest brief. */
 export function formatTransitState(state: TransitState): string {
-  return [
-    state.localLabel,
+  const lines = [
+    `${state.localDate} (${state.timezone})`,
     formatActivation('Sun', state.sun),
     formatActivation('Earth', state.earth),
-    `Arrows: ${state.arrows.join(', ') || 'none'}`,
-  ].join('\n');
+  ];
+  for (const name of ALL_BODY_NAMES) {
+    if (name === 'sun' || name === 'earth') continue;
+    const a = (state as unknown as BodyActivationMap)[name];
+    lines.push(`  ${name}: Gate ${a.gate}.${a.line} (provisional)`);
+  }
+  return lines.join('\n');
 }
-
-export { signAt };
-export type { PlanetId };
