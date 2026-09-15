@@ -16,7 +16,7 @@ import {
   longitudeAt,
   deriveActivation,
 } from './bodyActivation';
-import { deriveTransitArrows } from './reference/arrows';
+import { computeTransitArrows } from './reference/arrows';
 import {
   ALL_BODY_NAMES,
   type BodyActivation,
@@ -60,10 +60,8 @@ export function localDateStartUtc(
 ): number {
   const { y, m, d } = localDateParts(date, timezone);
   const guess = Date.UTC(y, m, d, 0, 0, 0, 0);
-
   const offsetAtGuess = getTimeZoneOffsetMs(new Date(guess), timezone);
   const corrected = guess - offsetAtGuess;
-
   // Refinement pass: the offset may differ if that crossed a DST boundary.
   const offsetAtCorrected = getTimeZoneOffsetMs(
     new Date(corrected),
@@ -210,11 +208,11 @@ export function computeTransitState(
     neptune: activations.neptune,
     pluto: activations.pluto,
     // fast arrow ← Sun + Earth tones; slow ← North + South Node tones.
-    transitArrows: deriveTransitArrows(
-      activations.sun,
-      activations.earth,
-      activations.northNode,
-      activations.southNode
+    transitArrows: computeTransitArrows(
+      activations.sun.tone,
+      activations.earth.tone,
+      activations.northNode.tone,
+      activations.southNode.tone
     ),
   };
 }
@@ -242,8 +240,8 @@ export function gateTransitionsForDay(
   const transitions: Date[] = [];
   const start = localDateStartUtc(dayStart, timezone);
   const end = localDateEndUtc(dayStart, timezone);
-
   const STEP = 30 * 60 * 1000;
+
   let cursor = start;
   let currentGate = deriveActivation(longitudeAt(planet, cursor)).gate;
 
@@ -269,7 +267,6 @@ export function gateTransitionsForDay(
       cursor = next;
     }
   }
-
   return transitions;
 }
 

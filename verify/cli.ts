@@ -22,7 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { bodyActivation, deriveActivation } from '../lib/bodyActivation';
+import { bodyActivation, signAt } from '../lib/bodyActivation';
 import { computeTransitState, formatTransitState } from '../lib/transitTimeline';
 import type { TransitState } from '../lib/types';
 
@@ -93,7 +93,7 @@ export const ANCHORS: Anchor[] = [
   //  Sun at Scorpio 16°00' = Gate 44 (12.5°→18.125° Scorpio portion)
   { label: 'November 2022 Lunar Eclipse (Sun side)', date: '2022-11-08', timezone: 'America/New_York',
     expectedSunGate: 44, expectedSunSign: 'Scorpio',
-    expectedSunLongitude: 226.0, // 16° Scorpio = 180° + 16° = 196°, wait
+    expectedSunLongitude: 196.0, // 16° Scorpio = 180° + 16° = 196°
     source: 'Karen Curry Parker, 2022 Eclipse data' },
   // NOTE: Nov 8 Sun should be at Scorpio 16° = ecliptic longitude 196°.
 
@@ -241,8 +241,16 @@ export interface VerifyResult {
   notes?: string;
 }
 
-const TOLERANCE_DEG = 0.5;  // acceptable drift in longitude
+new: const TOLERANCE_DEG = 0.5; // acceptable drift in longitude
 
+     const SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
+       'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'] as const;
+
+     /** Zodiac sign for an ecliptic longitude in degrees. */
+     function signAt(longitude: number): string {
+       const norm = ((longitude % 360) + 360) % 360;
+       return SIGNS[Math.floor(norm / 30)];
+     }
 /**
  * Run verification for a single anchor.
  * Returns a VerifyResult that can be logged.
