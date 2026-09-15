@@ -22,7 +22,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { computeTransitState, formatTransitState, bodyActivation, signAt } from '../lib/ephemeris';
+import { bodyActivation, deriveActivation } from '../lib/bodyActivation';
+import { computeTransitState, formatTransitState } from '../lib/transitTimeline';
 import type { TransitState } from '../lib/types';
 
 // ─────────────────────────────────────────────────────────────────

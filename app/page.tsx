@@ -11,11 +11,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import {
-  computeTransitState,
-  bodyActivation,
-  localDateStartUtc,
-} from '@/lib/ephemeris';
+import { computeTransitState, formatLocalDate, formatTransitState, sunTransitionsForDay } from '@/lib/transitTimeline';
+import { bodyActivation } from '@/lib/bodyActivation';
 import {
   COLORS, TONES, BASES,
   getColor, getTone, getBase,

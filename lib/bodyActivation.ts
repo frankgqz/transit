@@ -1,0 +1,315 @@
+// lib/bodyActivation.ts
+//
+// Pure compute: given a UTC timestamp, derive a body's full activation
+// (gate, line, color, tone, base) plus its ecliptic longitude.
+//
+// No timezones, no date strings, no formatted output. That half lives in
+// lib/transitTimeline.ts, which imports from here — never the reverse.
+//
+// Counting rule (per Frank, matches HD canon):
+//   base  1..5 → 6 wraps to 1, tone  += 1
+//   tone  1..6 → 7 wraps to 1, color += 1
+//   color 1..6 → 7 wraps to 1, line  += 1
+//   line  1..6 → 7 wraps to 1, gate increments to the next on the wheel
+//
+// Wheel structure (verified against Ra's Definitive Book):
+//   64 gates × 5°37'30" (= 5.625°) = 360°
+//   Anchor: Gate 25 starts at 0° Aries     (spring equinox)
+//           Gate 15 starts at 0° Cancer    (summer solstice)
+//           Gate 46 starts at 0° Libra     (autumn equinox)
+//           Gate 10 starts at 0° Capricorn (winter solstice)
+//
+// Per-gate arcs (verified against Ra's Rave I'Ching):
+//   Line:  56'15"    = 0.9375°
+//   Color:  9'22.5"  = 0.15625°
+//   Tone:   1'33.75" = 0.02604°
+//   Base:     15.625" = 0.00434°   (5 bases, not 6)
+//
+// Ra's Mandala: 6 lines × 6 colors × 6 tones × 5 bases = 1080 points per gate.
+//
+// Orbital periods for the 13 bodies (from lib/reference/planets.ts):
+//   Sun/Earth: 365.25 days        Moon: 27.32 days
+//   Mercury: 87.97   Venus: 224.70   Mars: 686.97
+//   Jupiter: 4332.59 (~11.86 y)      Saturn: 10759.22 (~29.46 y)
+//   Uranus: 30688.5 (~84.01 y)       Neptune: 60182.0 (~165 y)
+//   Pluto: 90560.0 (~248 y)
+//   Nodes: 6798.27 (~18.6 y, retrograde)
+//
+// IMPORTANT: this ephemeris is a SELF-COMPUTED model calibrated to the
+// equinox/solstice anchors. It is NOT an astronomical ephemeris (e.g. NASA
+// JPL) — the precision is sufficient for the line/color/tone/base levels
+// that matter for validation, but exact ecliptic longitudes should be
+// verified against humdes.com or JPL when needed.
+
+import {
+  GATES,
+  GATE_BY_NUMBER,
+  gateAtLongitude,
+  positionWithinGate,
+  type GateNumber,
+  type ZodiacSign,
+} from './reference/gates';
+import {
+  type ColorNumber,
+  type ToneNumber,
+  type BaseNumber,
+} from './reference/frameworks';
+import {
+  PLANET_SPEED_DEG_PER_DAY,
+  type PlanetId,
+} from './reference/planets';
+import type { BodyActivation } from './types';
+
+// ─────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────
+
+/** The 12 zodiac signs in order, with their ecliptic longitude ranges. */
+const ZODIAC_SIGNS: readonly ZodiacSign[] = [
+  'Aries', 'Taurus', 'Gemini', 'Cancer',
+  'Leo', 'Virgo', 'Libra', 'Scorpio',
+  'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces',
+];
+
+// ─────────────────────────────────────────────────────────────────
+// ANCHOR REFERENCE MOMENT
+// ─────────────────────────────────────────────────────────────────
+//
+// All planet positions are computed RELATIVE to a single anchor moment.
+// We choose J2000.0 (2000-01-01 12:00 TT ≈ 11:58:55.816 UTC) as the
+// reference, and assume the following gate assignments at that moment:
+//
+//   Sun:   Gate 25, Line 1, Color 1, Tone 1, Base 1 (0° Aries, approx)
+//   Earth: Gate 7,  Line 1, Color 1, Tone 1, Base 1 (180° from Sun)
+//   Moon:  unknown — depends on astronomical Moon position
+//   Nodes: unknown — depends on astronomical Node position
+//   Planets: unknown — depend on astronomical positions
+//
+// In Phase 1 we approximate Moon/Node/planet positions using their mean
+// motion from a known reference. For verification we cross-check against
+// humdes.com's transits archive.
+//
+// NOTE: a JPL-backed ephemeris is NOT used in Phase 1. We use the
+// equinox/solstice anchors + orbital periods as a self-consistent
+// reference frame. The verify CLI will tell us if this is good enough.
+
+const ANCHOR_UTC = Date.UTC(2000, 0, 1, 11, 58, 55); // J2000.0
+
+/**
+ * Anchor ecliptic longitudes (sidereal, 0° = 0° Aries).
+ * For Sun/Earth these are derived from the gate assignment at J2000.0.
+ * For Moon/Nodes/planets these are PLACEHOLDERS — Phase 1 needs
+ * verification against humdes.com.
+ *
+ * Format: degrees [0, 360).
+ */
+const ANCHOR_LONGITUDE: Record<PlanetId, number> = {
+  Sun: 0.0,        // J2000.0 sidereal Aries 0° (approx)
+  Earth: 180.0,    // opposite Sun
+  Moon: 0.0,       // PLACEHOLDER — needs JPL data
+  NorthNode: 125.0, // PLACEHOLDER — needs JPL data
+  SouthNode: 305.0, // opposite N.Node
+  Mercury: 0.0,    // PLACEHOLDER
+  Venus: 0.0,      // PLACEHOLDER
+  Mars: 0.0,       // PLACEHOLDER
+  Jupiter: 0.0,    // PLACEHOLDER
+  Saturn: 0.0,     // PLACEHOLDER
+  Uranus: 0.0,     // PLACEHOLDER
+  Neptune: 0.0,    // PLACEHOLDER
+  Pluto: 0.0,      // PLACEHOLDER
+  Chiron: 0.0,     // not used
+};
+
+// ─────────────────────────────────────────────────────────────────
+// LONGITUDE COMPUTATION
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compute a planet's sidereal ecliptic longitude at a UTC timestamp,
+ * relative to the anchor moment.
+ *
+ * @param planet the celestial body
+ * @param utcMs  milliseconds since 1970-01-01 00:00 UTC
+ * @returns ecliptic longitude in degrees [0, 360)
+ */
+export function longitudeAt(planet: PlanetId, utcMs: number): number {
+  const speed = PLANET_SPEED_DEG_PER_DAY[planet]; // deg/day (negative = retrograde)
+  const anchorLon = ANCHOR_LONGITUDE[planet];
+  const daysSinceAnchor = (utcMs - ANCHOR_UTC) / (1000 * 60 * 60 * 24);
+  const lon = anchorLon + speed * daysSinceAnchor;
+  return ((lon % 360) + 360) % 360; // wrap to [0, 360)
+}
+
+/**
+ * Resolve an ecliptic longitude to a zodiac sign.
+ */
+export function signAt(longitude: number): ZodiacSign {
+  const idx = Math.floor((((longitude % 360) + 360) % 360) / 30);
+  return ZODIAC_SIGNS[idx];
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GATE / LINE / COLOR / TONE / BASE DERIVATION
+// ─────────────────────────────────────────────────────────────────
+
+export interface SixLayerActivation {
+  gate: GateNumber;
+  line: 1 | 2 | 3 | 4 | 5 | 6;
+  color: ColorNumber;
+  tone: ToneNumber;
+  base: BaseNumber;
+}
+
+/**
+ * Given an ecliptic longitude, derive the full activation
+ * (gate, line, color, tone, base).
+ *
+ * Method:
+ *   1. Find the gate the longitude falls in (gateAtLongitude)
+ *   2. Compute position within that gate as [0, 1)
+ *   3. Cascade the residual through each layer in arc order:
+ *      line (1/6) → color (1/6) → tone (1/6) → base (1/5)
+ *      Total = 6 × 6 × 6 × 5 = 1080 points per gate (Ra's Mandala).
+ */
+export function deriveActivation(longitude: number): SixLayerActivation {
+  // 1. Gate
+  const gateMeta = gateAtLongitude(longitude);
+  const gate = gateMeta.number;
+
+  // 2. Position within gate [0, 1)
+  const pos = positionWithinGate(longitude);
+
+  // Line: 1/6 of the gate
+  const lineRaw = pos * 6; // [0, 6)
+  const line = clampSix(lineRaw) as 1 | 2 | 3 | 4 | 5 | 6;
+  const lineResidual = lineRaw - Math.floor(lineRaw); // [0, 1)
+
+  // Color: 1/6 of the line
+  const colorRaw = lineResidual * 6; // [0, 6)
+  const color = clampSix(colorRaw);
+  const colorResidual = colorRaw - Math.floor(colorRaw);
+
+  // Tone: 1/6 of the color
+  const toneRaw = colorResidual * 6; // [0, 6)
+  const tone = clampSix(toneRaw);
+  const toneResidual = toneRaw - Math.floor(toneRaw);
+
+  // Base: 1/5 of the tone — 5 bases, not 6 (Ra's Mandala = 1080/gate)
+  const baseRaw = toneResidual * 5; // [0, 5)
+  const base = clampFive(baseRaw);
+
+  return { gate, line, color, tone, base };
+}
+
+/**
+ * Clamp a value in [0, 6) to the integer in [1, 6].
+ * floor(x) + 1, so x = 0 → 1 and x = 5.999 → 6.
+ */
+function clampSix(x: number): 1 | 2 | 3 | 4 | 5 | 6 {
+  const v = Math.floor(x) + 1;
+  if (v < 1) return 1;
+  if (v > 6) return 6;
+  return v as 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+/**
+ * Clamp a value in [0, 5) to the integer in [1, 5].
+ * Same floor+1 convention as clampSix — bases run 1..5 per canon.
+ */
+function clampFive(x: number): 1 | 2 | 3 | 4 | 5 {
+  const v = Math.floor(x) + 1;
+  if (v < 1) return 1;
+  if (v > 5) return 5;
+  return v as 1 | 2 | 3 | 4 | 5;
+}
+
+/**
+ * Apply the counting rule with cascade:
+ *   base 6 → base 1, tone +1; tone 7 → tone 1, color +1; etc.
+ *
+ * Takes and returns plain numbers so callers can hand it raw arithmetic
+ * results; the returned `line` and `gate` are narrowed back to their
+ * literal/union types at the boundary.
+ */
+export function applyCountingRule(
+  base: number,
+  tone: number,
+  color: number,
+  line: number,
+  gate: number
+): { base: number; tone: number; color: number; line: number; gate: number } {
+  let b = base, t = tone, c = color, l = line, g = gate;
+
+  // Bases overflow at 5, every other layer at 6.
+  if (b > 5) {
+    b = 1;
+    t += 1;
+  }
+  if (t > 6) {
+    t = 1;
+    c += 1;
+  }
+  if (c > 6) {
+    c = 1;
+    l += 1;
+  }
+  if (l > 6) {
+    l = 1;
+    // `g` is a mutable counter that also receives plain numbers below
+    // (the 64 → 1 wrap), so TypeScript widens it to `number`. The value
+    // here is always a real gate, so assert it at the call site.
+    g = nextGate(g as GateNumber);
+  }
+  // Gate wraps 64 → 1
+  if (g > 64) g = 1;
+
+  return {
+    base: b,
+    tone: t,
+    color: c,
+    line: l as 1 | 2 | 3 | 4 | 5 | 6,
+    gate: g as GateNumber,
+  };
+}
+
+/**
+ * Return the next gate on the wheel after the given one.
+ * The wheel is the King Wen sequence (encoded in GATES array order).
+ */
+export function nextGate(gate: GateNumber): GateNumber {
+  const idx = GATES.findIndex((g) => g.number === gate);
+  if (idx === -1) throw new Error(`Unknown gate: ${gate}`);
+  const next = GATES[(idx + 1) % GATES.length];
+  return next.number;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// BODY ACTIVATION (top-level)
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the full activation of one celestial body at a UTC timestamp.
+ * This is the function every consumer calls — once per body, 13 times
+ * per timestamp.
+ */
+export function bodyActivation(
+  planet: PlanetId,
+  utcMs: number
+): BodyActivation {
+  const longitude = longitudeAt(planet, utcMs);
+  const { gate, line, color, tone, base } = deriveActivation(longitude);
+  const gateMeta = GATE_BY_NUMBER[gate];
+  const sign = signAt(longitude);
+
+  return {
+    planet,
+    gate,
+    line,
+    color,
+    tone,
+    base,
+    longitude,
+    sign,
+    gateMeta,
+  };
+}
