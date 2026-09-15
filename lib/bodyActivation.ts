@@ -104,8 +104,8 @@ const ANCHOR_UTC = Date.UTC(2000, 0, 1, 11, 58, 55); // J2000.0
  * Format: degrees [0, 360).
  */
 const ANCHOR_LONGITUDE: Record<PlanetId, number> = {
-  Sun: 0.0,        // J2000.0 sidereal Aries 0° (approx)
-  Earth: 180.0,    // opposite Sun
+  Sun: 280.46,     // Sun's true tropical longitude at J2000.0 (2000-01-01 12:00 TT)
+  Earth: 100.46,   // opposite Sun
   Moon: 0.0,       // PLACEHOLDER — needs JPL data
   NorthNode: 125.0, // PLACEHOLDER — needs JPL data
   SouthNode: 305.0, // opposite N.Node
