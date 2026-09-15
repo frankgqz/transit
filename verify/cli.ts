@@ -22,7 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { bodyActivation, signAt } from '../lib/bodyActivation';
+import { bodyActivation } from '../lib/bodyActivation';
 import { computeTransitState, formatTransitState } from '../lib/transitTimeline';
 import type { TransitState } from '../lib/types';
 
