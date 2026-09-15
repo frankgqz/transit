@@ -205,9 +205,9 @@ export function deriveActivation(longitude: number): SixLayerActivation {
   const tone = clampSix(toneRaw);
   const toneResidual = toneRaw - Math.floor(toneRaw);
 
-    // Base: 1/5 of tone → 5 bases (NOT 6 — Ra's Mandala has 5 Bases, not 6)
-    const baseRaw = toneResidual * 5; // [0, 5)
-    const base = clampFive(baseRaw);
+  // Base: 1/5 of tone → 5 bases (NOT 6 — Ra's Mandala has 5 Bases, not 6)
+  const baseRaw = toneResidual * 5; // [0, 5)
+  const base = clampFive(baseRaw);
 
   return { gate, line, color, tone, base };
 }
@@ -256,7 +256,7 @@ export function applyCountingRule(
   }
   if (l > 6) {
     l = 1;
-    g = nextGate(g);
+    g = nextGate(g as GateNumber);
   }
   // Gate wraps 64 → 1
   if (g > 64) g = 1;
