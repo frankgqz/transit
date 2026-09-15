@@ -241,7 +241,7 @@ export interface VerifyResult {
   notes?: string;
 }
 
-new: const TOLERANCE_DEG = 0.5; // acceptable drift in longitude
+const TOLERANCE_DEG = 0.5; // acceptable drift in longitude
 
      const SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo',
        'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'] as const;
