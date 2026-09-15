@@ -18,11 +18,11 @@ import {
  * This version resolves the offset AT the candidate instant and
  * corrects once, which handles the normal DST case.
  */
-export function localDateStartUtc(date: Date, timeZone: string): number {
-  // First guess: treat the local Y/M/D as if it were UTC
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  const d = date.getDate();
+export function localDateStartUtc(
+  date: string | Date,
+  timeZone: string
+): number {
+  const { y, m, d } = localDateParts(date, timeZone);
   const guess = Date.UTC(y, m, d, 0, 0, 0, 0);
 
   // Find what UTC instant actually corresponds to local midnight
@@ -36,10 +36,38 @@ export function localDateStartUtc(date: Date, timeZone: string): number {
   return guess - offsetAtCorrected;
 }
 
+/**
+ * Calendar parts (y, 0-based m, d) of the local day.
+ * A bare 'YYYY-MM-DD' string — what <input type="date"> and route
+ * params produce — is split into components directly. It must NOT go
+ * through new Date(str): that parses as UTC midnight, so every
+ * negative-offset zone (the Americas) would read it as the day before.
+ */
+function localDateParts(
+  date: string | Date,
+  timeZone: string
+): { y: number; m: number; d: number } {
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [y, m, d] = date.split('-').map(Number);
+    return { y, m: m - 1, d };
+  }
+  const instant = typeof date === 'string' ? new Date(date) : date;
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = fmt.formatToParts(instant);
+  const get = (t: string) =>
+    Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return { y: get('year'), m: get('month') - 1, d: get('day') };
+}
+
 /** UTC instant just before local midnight of the FOLLOWING local day. */
-export function localDateEndUtc(date: Date, timeZone: string): number {
-  const nextDay = new Date(date);
-  nextDay.setDate(nextDay.getDate() + 1);
+export function localDateEndUtc(date: string | Date, timeZone: string): number {
+  const { y, m, d } = localDateParts(date, timeZone);
+  const nextDay = new Date(Date.UTC(y, m, d + 1));
   // one millisecond before next local midnight
   return localDateStartUtc(nextDay, timeZone) - 1;
 }
@@ -76,14 +104,15 @@ function getTimeZoneOffsetMs(instant: Date, timeZone: string): number {
    DATE FORMATTING
    ============================================================ */
 
-export function formatLocalDate(date: Date, timeZone: string): string {
+export function formatLocalDate(date: string | Date, timeZone: string): string {
+  const { y, m, d } = localDateParts(date, timeZone);
   return new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
     month: 'long',
     day: 'numeric',
     weekday: 'long',
-  }).format(date);
+  }).format(new Date(Date.UTC(y, m, d, 12)));
 }
 
 /* ============================================================
@@ -93,11 +122,13 @@ export function formatLocalDate(date: Date, timeZone: string): string {
 /**
  * Full transit picture for one instant: Sun + Earth activations
  * with gate/line/color/tone/base and the counting-rule arrows.
+ * utcMs is the instant to compute at; timeZone and date are carried
+ * through so callers can label the day without recomputing.
  */
 export function computeTransitState(
   utcMs: number,
   _timeZone: string,
-  _date: Date
+  _date: string | Date
 ): TransitState {
   return bodyActivation(new Date(utcMs));
 }
@@ -108,7 +139,7 @@ export function computeTransitState(
  * 14:32, then Gate 64".
  */
 export function sunTransitionsForDay(
-  dayStart: Date,
+  dayStart: string | Date,
   timeZone: string,
   endAnchor: Date
 ): Date[] {
