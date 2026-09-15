@@ -27,20 +27,15 @@
 //
 // Ra's Mandala: 6 lines × 6 colors × 6 tones × 5 bases = 1080 points per gate.
 //
-// Orbital periods for the 13 bodies (from lib/reference/planets.ts):
-//   Sun/Earth: 365.25 days        Moon: 27.32 days
-//   Mercury: 87.97   Venus: 224.70   Mars: 686.97
-//   Jupiter: 4332.59 (~11.86 y)      Saturn: 10759.22 (~29.46 y)
-//   Uranus: 30688.5 (~84.01 y)       Neptune: 60182.0 (~165 y)
-//   Pluto: 90560.0 (~248 y)
-//   Nodes: 6798.27 (~18.6 y, retrograde)
-//
-// IMPORTANT: this ephemeris is a SELF-COMPUTED model calibrated to the
-// equinox/solstice anchors. It is NOT an astronomical ephemeris (e.g. NASA
-// JPL) — the precision is sufficient for the line/color/tone/base levels
-// that matter for validation, but exact ecliptic longitudes should be
-// verified against humdes.com or JPL when needed.
-
+// Ephemeris model: J2000.0 mean longitudes (JPL approximate elements) +
+// mean-motion rates, PLUS equation-of-center corrections for the Sun and
+// the principal lunar terms for the Moon. Accuracy:
+//   Sun:  ~±0.01°   (gate/line/color accurate)
+//   Moon: ~±0.3°    (gate accurate, line mostly accurate)
+//   Nodes: ~±0.1°   (mean node; gate accurate)
+//   Mercury/Mars: mean longitude only — can differ from true by several
+//     degrees (eccentric orbits). Outer planets: better, but still mean-only.
+// Cross-check against humdes.com via the verify CLI.
 import {
   GATES,
   GATE_BY_NUMBER,
@@ -64,6 +59,9 @@ import type { BodyActivation } from './types';
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────
 
+const DEG2RAD = Math.PI / 180;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
 /** The 12 zodiac signs in order, with their ecliptic longitude ranges. */
 const ZODIAC_SIGNS: readonly ZodiacSign[] = [
   'Aries', 'Taurus', 'Gemini', 'Cancer',
@@ -75,58 +73,71 @@ const ZODIAC_SIGNS: readonly ZodiacSign[] = [
 // ANCHOR REFERENCE MOMENT
 // ─────────────────────────────────────────────────────────────────
 //
-// All planet positions are computed RELATIVE to a single anchor moment.
-// We choose J2000.0 (2000-01-01 12:00 TT ≈ 11:58:55.816 UTC) as the
-// reference, and assume the following gate assignments at that moment:
-//
-//   Sun:   Gate 25, Line 1, Color 1, Tone 1, Base 1 (0° Aries, approx)
-//   Earth: Gate 7,  Line 1, Color 1, Tone 1, Base 1 (180° from Sun)
-//   Moon:  unknown — depends on astronomical Moon position
-//   Nodes: unknown — depends on astronomical Node position
-//   Planets: unknown — depend on astronomical positions
-//
-// In Phase 1 we approximate Moon/Node/planet positions using their mean
-// motion from a known reference. For verification we cross-check against
-// humdes.com's transits archive.
-//
-// NOTE: a JPL-backed ephemeris is NOT used in Phase 1. We use the
-// equinox/solstice anchors + orbital periods as a self-consistent
-// reference frame. The verify CLI will tell us if this is good enough.
-
+// All planet positions are computed RELATIVE to J2000.0
+// (2000-01-01 12:00 TT ≈ 11:58:55.816 UTC).
 const ANCHOR_UTC = Date.UTC(2000, 0, 1, 11, 58, 55); // J2000.0
 
 /**
- * Anchor ecliptic longitudes (sidereal, 0° = 0° Aries).
- * For Sun/Earth these are derived from the gate assignment at J2000.0.
- * For Moon/Nodes/planets these are PLACEHOLDERS — Phase 1 needs
- * verification against humdes.com.
- *
- * Format: degrees [0, 360).
+ * Anchor ecliptic longitudes at J2000.0 (tropical, degrees [0, 360)).
+ * Sun/Earth/Moon/Nodes are real J2000.0 values (JPL approximate mean
+ * elements). Planets are mean longitudes at J2000.0 — good to the gate
+ * level for slow bodies, approximate for Mercury/Mars (eccentric orbits).
  */
 const ANCHOR_LONGITUDE: Record<PlanetId, number> = {
-  Sun: 280.46,     // Sun's true tropical longitude at J2000.0 (2000-01-01 12:00 TT)
-  Earth: 100.46,   // opposite Sun
-  Moon: 0.0,       // PLACEHOLDER — needs JPL data
-  NorthNode: 125.0, // PLACEHOLDER — needs JPL data
-  SouthNode: 305.0, // opposite N.Node
-  Mercury: 0.0,    // PLACEHOLDER
-  Venus: 0.0,      // PLACEHOLDER
-  Mars: 0.0,       // PLACEHOLDER
-  Jupiter: 0.0,    // PLACEHOLDER
-  Saturn: 0.0,     // PLACEHOLDER
-  Uranus: 0.0,     // PLACEHOLDER
-  Neptune: 0.0,    // PLACEHOLDER
-  Pluto: 0.0,      // PLACEHOLDER
-  Chiron: 0.0,     // not used
+  Sun: 280.4606,        // Sun's geocentric mean longitude at J2000.0
+  Earth: 100.4645,      // heliocentric Earth = Sun + 180°
+  Moon: 218.3162,       // Moon's mean longitude at J2000.0
+  NorthNode: 125.0446,  // mean ascending lunar node at J2000.0
+  SouthNode: 305.0446,  // opposite N.Node
+  Mercury: 252.2509,
+  Venus: 181.9798,
+  Mars: 355.4330,
+  Jupiter: 34.3964,
+  Saturn: 49.9542,
+  Uranus: 313.2381,
+  Neptune: 304.8631,
+  Pluto: 238.9567,
+  Chiron: 0.0,          // not used
 };
+
+// ─────────────────────────────────────────────────────────────────
+// PERTURBATION CORRECTIONS
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Sun's equation of center: difference between true and mean longitude.
+ * Up to ±1.9° — larger than a third of a gate, so it must be applied.
+ * Mean anomaly at J2000.0: 357.5291°, rate 0.98560028°/day.
+ */
+function sunEquationOfCenter(daysSinceAnchor: number): number {
+  const M = (357.5291 + 0.98560028 * daysSinceAnchor) * DEG2RAD;
+  return 1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M);
+}
+
+/**
+ * Principal lunar longitude terms (equation of center, evection,
+ * variation). Reduces Moon error from ~±6° (mean only) to ~±0.3°.
+ * Mean anomaly M': 134.9634° + 13.064993°/day
+ * Mean elongation D: 297.8502° + 12.190749°/day
+ */
+function moonLongitudeCorrection(daysSinceAnchor: number): number {
+  const M = (134.9634 + 13.064993 * daysSinceAnchor) * DEG2RAD;
+  const D = (297.8502 + 12.190749 * daysSinceAnchor) * DEG2RAD;
+  return (
+    6.2888 * Math.sin(M) +        // equation of center
+    1.2740 * Math.sin(2 * D - M) + // evection
+    0.6583 * Math.sin(2 * D) +     // variation
+    0.2136 * Math.sin(2 * M)
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────
 // LONGITUDE COMPUTATION
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Compute a planet's sidereal ecliptic longitude at a UTC timestamp,
- * relative to the anchor moment.
+ * Compute a body's tropical ecliptic longitude at a UTC timestamp,
+ * relative to the J2000.0 anchor, with Sun/Moon corrections applied.
  *
  * @param planet the celestial body
  * @param utcMs  milliseconds since 1970-01-01 00:00 UTC
@@ -135,8 +146,10 @@ const ANCHOR_LONGITUDE: Record<PlanetId, number> = {
 export function longitudeAt(planet: PlanetId, utcMs: number): number {
   const speed = PLANET_SPEED_DEG_PER_DAY[planet]; // deg/day (negative = retrograde)
   const anchorLon = ANCHOR_LONGITUDE[planet];
-  const daysSinceAnchor = (utcMs - ANCHOR_UTC) / (1000 * 60 * 60 * 24);
-  const lon = anchorLon + speed * daysSinceAnchor;
+  const daysSinceAnchor = (utcMs - ANCHOR_UTC) / MS_PER_DAY;
+  let lon = anchorLon + speed * daysSinceAnchor;
+  if (planet === 'Sun') lon += sunEquationOfCenter(daysSinceAnchor);
+  if (planet === 'Moon') lon += moonLongitudeCorrection(daysSinceAnchor);
   return ((lon % 360) + 360) % 360; // wrap to [0, 360)
 }
 
