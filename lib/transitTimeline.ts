@@ -4,44 +4,53 @@
 //
 // Imports pure math from ./bodyActivation and the shared contract from
 // ./types. Never the reverse: bodyActivation.ts knows nothing about
-// days, timezones, or the 13-body shape.
+// days, timezones, or the app-level BodyActivation shape.
 //
-// Scope (v0.2): Sun + Earth anchors are calibrated; Moon, Nodes and the
-// planets still carry PLACEHOLDER anchors in bodyActivation.ts. Their
-// activations are computed and returned because TransitState requires
-// them, but they are NOT trustworthy until real anchor data lands.
-// The UI should label them as provisional.
+// Scope (v0.3): bodyActivation.ts now supports ONLY the four calibrated
+// bodies — Sun, Earth, North Node, South Node — via activationsFor().
+// Planets and Moon no longer have placeholder anchors, so they are no
+// longer computed here. TransitState in types.ts should eventually be
+// narrowed to these four; until then computeTransitState casts.
 import {
   activationsFor,
-  longitudeOf,
-  activate,
+  nextBoundaryChange,
+  type Activation,
 } from './bodyActivation';
 import { computeTransitArrows } from './reference/arrows';
+import { getGate } from './reference/gates';
+import type { PlanetId } from './reference/planets';
 import {
-  ALL_BODY_NAMES,
   type BodyActivation,
-  type BodyActivationMap,
-  type BodyName,
   type TransitState,
 } from './types';
-import type { PlanetId } from './reference/planets';
 
-/** BodyName → the PlanetId key used by bodyActivation(). */
-const BODY_TO_PLANET: Record<BodyName, PlanetId> = {
+/** The four bodies bodyActivation.ts can actually compute. */
+const SUPPORTED_BODIES = ['sun', 'earth', 'northNode', 'southNode'] as const;
+export type SupportedBody = (typeof SUPPORTED_BODIES)[number];
+
+/** SupportedBody → the PlanetId key used in BodyActivation. */
+const BODY_TO_PLANET: Record<SupportedBody, PlanetId> = {
   sun: 'Sun',
   earth: 'Earth',
-  moon: 'Moon',
   northNode: 'NorthNode',
   southNode: 'SouthNode',
-  mercury: 'Mercury',
-  venus: 'Venus',
-  mars: 'Mars',
-  jupiter: 'Jupiter',
-  saturn: 'Saturn',
-  uranus: 'Uranus',
-  neptune: 'Neptune',
-  pluto: 'Pluto',
 };
+
+/**
+ * Adapter: lean Activation (gate/line/color/tone/base/key/longitude/sign)
+ * → app-level BodyActivation, re-attaching `planet` and `gateMeta`.
+ * getGate() (not GATE_BY_NUMBER) because gate numbers repeat across signs.
+ */
+export function toBodyActivation(
+  a: Activation,
+  planet: PlanetId
+): BodyActivation {
+  return {
+    ...a,
+    planet,
+    gateMeta: getGate(a.gate),
+  };
+}
 
 /* ============================================================
    TIMEZONE-AWARE DAY HANDLING
@@ -171,8 +180,8 @@ export function localNoonUtc(date: string | Date, timezone: string): number {
    ============================================================ */
 
 /**
- * Full snapshot for one instant: all 13 bodies plus the two
- * transit-active arrows.
+ * Full snapshot for one instant: the four supported bodies plus the
+ * transit arrows.
  *
  * @param utcMs    instant to compute at (use localNoonUtc for a day)
  * @param timezone viewer's IANA zone
@@ -183,30 +192,22 @@ export function computeTransitState(
   timezone: string,
   date: string | Date
 ): TransitState {
-  const activations = {} as BodyActivationMap;
-  for (const name of ALL_BODY_NAMES) {
-    activations[name] = bodyActivation(BODY_TO_PLANET[name], utcMs);
+  // One call returns all four activations.
+  const set = activationsFor(new Date(utcMs));
+
+  const activations = {} as Record<SupportedBody, BodyActivation>;
+  for (const name of SUPPORTED_BODIES) {
+    activations[name] = toBodyActivation(set[name], BODY_TO_PLANET[name]);
   }
 
   return {
     utcTimestamp: new Date(utcMs).toISOString(),
     timezone,
     localDate: toIsoDay(date, timezone),
-    // The 13 bodies, spread in ALL_BODY_NAMES order so the object
-    // literal stays in sync if the list ever changes.
     sun: activations.sun,
     earth: activations.earth,
-    moon: activations.moon,
     northNode: activations.northNode,
     southNode: activations.southNode,
-    mercury: activations.mercury,
-    venus: activations.venus,
-    mars: activations.mars,
-    jupiter: activations.jupiter,
-    saturn: activations.saturn,
-    uranus: activations.uranus,
-    neptune: activations.neptune,
-    pluto: activations.pluto,
     // fast arrow ← Sun + Earth tones; slow ← North + South Node tones.
     transitArrows: computeTransitArrows(
       activations.sun.tone,
@@ -214,7 +215,9 @@ export function computeTransitState(
       activations.northNode.tone,
       activations.southNode.tone
     ),
-  };
+    // TODO: narrow TransitState in types.ts to the four supported bodies
+    // and drop this cast. Until then, planet fields are simply absent.
+  } as unknown as TransitState;
 }
 
 /** Convenience: snapshot for a whole local day (computed at noon). */
@@ -229,43 +232,27 @@ export function transitStateForDay(
  * UTC instants within a local day where a body's gate changes.
  * A gate spans 5.625° and the Sun moves ~0.9856°/day, so one gate
  * lasts ~5.7 days — normally ZERO transitions per day for the Sun.
- * The Moon crosses several. Kept generic so the timeline view can
- * reuse it for any body.
+ * The Moon would cross several (once it's supported).
+ *
+ * Replaces the old scan + binary-search: nextBoundaryChange() walks
+ * directly to the next crossing at the requested depth.
  */
 export function gateTransitionsForDay(
-  planet: PlanetId,
+  body: SupportedBody,
   dayStart: string | Date,
   timezone: string
 ): Date[] {
   const transitions: Date[] = [];
   const start = localDateStartUtc(dayStart, timezone);
   const end = localDateEndUtc(dayStart, timezone);
-  const STEP = 30 * 60 * 1000;
-
-  let cursor = start;
-  let currentGate = deriveActivation(longitudeAt(planet, cursor)).gate;
-
-  while (cursor + STEP < end) {
-    const next = cursor + STEP;
-    const g = deriveActivation(longitudeAt(planet, next)).gate;
-    if (g !== currentGate) {
-      // Narrow the crossing to ~5 s.
-      let lo = cursor;
-      let hi = next;
-      while (hi - lo > 5000) {
-        const mid = Math.floor((lo + hi) / 2);
-        if (deriveActivation(longitudeAt(planet, mid)).gate === currentGate) {
-          lo = mid;
-        } else {
-          hi = mid;
-        }
-      }
-      transitions.push(new Date(hi));
-      currentGate = g;
-      cursor = hi;
-    } else {
-      cursor = next;
-    }
+  let cursor = new Date(start);
+  // Hard cap: a fast body could cross many boundaries in a day; this
+  // only guards against a pathological infinite loop.
+  for (let i = 0; i < 100; i++) {
+    const bc = nextBoundaryChange(body, cursor, 'gate');
+    if (bc.at.getTime() > end) break;
+    transitions.push(bc.at);
+    cursor = bc.at;
   }
   return transitions;
 }
@@ -275,7 +262,7 @@ export function sunTransitionsForDay(
   dayStart: string | Date,
   timezone: string
 ): Date[] {
-  return gateTransitionsForDay('Sun', dayStart, timezone);
+  return gateTransitionsForDay('sun', dayStart, timezone);
 }
 
 /* ============================================================
@@ -293,17 +280,14 @@ export function formatActivation(
   ].join(' — ');
 }
 
-/** Human-readable summary: the two calibrated bodies in full, the rest brief. */
+/** Human-readable summary of the four supported bodies. */
 export function formatTransitState(state: TransitState): string {
   const lines = [
     `${state.localDate} (${state.timezone})`,
     formatActivation('Sun', state.sun),
     formatActivation('Earth', state.earth),
+    `  northNode: Gate ${state.northNode.gate}.${state.northNode.line}`,
+    `  southNode: Gate ${state.southNode.gate}.${state.southNode.line}`,
   ];
-  for (const name of ALL_BODY_NAMES) {
-    if (name === 'sun' || name === 'earth') continue;
-    const a = (state as unknown as BodyActivationMap)[name];
-    lines.push(`  ${name}: Gate ${a.gate}.${a.line} (provisional)`);
-  }
   return lines.join('\n');
 }

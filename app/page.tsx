@@ -101,7 +101,7 @@ export default function TransitPage() {
       });
       const localDate = localFmt.format(dt);
       const utcMs = localDateStartUtc(localDate, timezone) + 12 * 60 * 60 * 1000;
-      out.push({ date: localDate, sun: activationsFor(new Date(utcMs)).sun });
+      out.push({ date: localDate, sun: toBodyActivation(activationsFor(new Date(utcMs)).sun, BODY_TO_PLANET.sun) });
     }
     return out;
   }, [date, timezone]);
@@ -286,7 +286,7 @@ export default function TransitPage() {
                 >
                   <span className="text-neutral-400 w-32">{d.date}</span>
                   <span className="text-amber-300 font-semibold">
-                    Gate {d.sun.gate} · {d.sun.gateMeta.name}
+                    Gate {d.sun.gate} · {d.sun.name}
                   </span>
                   <span className="text-neutral-300">
                     L{d.sun.line} · C{d.sun.color} · T{d.sun.tone} · B{d.sun.base}
